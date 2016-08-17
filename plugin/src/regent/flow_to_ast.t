@@ -827,6 +827,54 @@ function flow_to_ast.node_block(cx, nid)
   })
 end
 
+function flow_to_ast.node_attach_hdf5(cx, nid)
+  local label = cx.graph:node_label(nid)
+  local inputs = cx.graph:incoming_edges_by_port(nid)
+
+  local region = cx.ast[get_arg_node(inputs, 1, true)]
+  local filename = cx.ast[get_arg_node(inputs, 2, false)]
+  local mode = cx.ast[get_arg_node(inputs, 3, false)]
+
+  local action = ast.typed.expr.AttachHDF5 {
+    region = as_expr_region_root(region, label.field_paths),
+    filename = filename,
+    mode = mode,
+    expr_type = terralib.types.unit,
+    annotations = label.annotations,
+    span = label.span,
+  }
+
+  return terralib.newlist({
+      ast.typed.stat.Expr {
+        expr = action,
+        annotations = action.annotations,
+        span = action.span,
+      },
+  })
+end
+
+function flow_to_ast.node_detach_hdf5(cx, nid)
+  local label = cx.graph:node_label(nid)
+  local inputs = cx.graph:incoming_edges_by_port(nid)
+
+  local region = cx.ast[get_arg_node(inputs, 1, true)]
+
+  local action = ast.typed.expr.DetachHDF5 {
+    region = as_expr_region_root(region, label.field_paths),
+    expr_type = terralib.types.unit,
+    annotations = label.annotations,
+    span = label.span,
+  }
+
+  return terralib.newlist({
+      ast.typed.stat.Expr {
+        expr = action,
+        annotations = action.annotations,
+        span = action.span,
+      },
+  })
+end
+
 function flow_to_ast.node_while_loop(cx, nid)
   local label = cx.graph:node_label(nid)
   local block_cx = cx:new_block_scope(label)
@@ -1050,6 +1098,12 @@ function flow_to_ast.node(cx, nid)
 
   elseif label:is(flow.node.Release) then
     return flow_to_ast.node_release(cx, nid)
+
+  elseif label:is(flow.node.AttachHDF5) then
+    return flow_to_ast.node_attach_hdf5(cx, nid)
+
+  elseif label:is(flow.node.DetachHDF5) then
+    return flow_to_ast.node_detach_hdf5(cx, nid)
 
   elseif label:is(flow.node.Open) then
     return

@@ -1664,6 +1664,17 @@ function analyze_privileges.expr_release(cx, node, privilege_map)
         end)))
 end
 
+function analyze_privileges.expr_attach_hdf5(cx, node, privilege_map)
+  return privilege_meet(
+    analyze_privileges.expr_region_root(cx, node.region, reads_writes),
+    analyze_privileges.expr(cx, node.filename, reads),
+    analyze_privileges.expr(cx, node.mode, reads))
+end
+
+function analyze_privileges.expr_detach_hdf5(cx, node, privilege_map)
+  return analyze_privileges.expr_region_root(cx, node.region, reads_writes)
+end
+
 function analyze_privileges.expr_unary(cx, node, privilege_map)
   return analyze_privileges.expr(cx, node.rhs, reads)
 end
@@ -1840,6 +1851,12 @@ function analyze_privileges.expr(cx, node, privilege_map)
 
   elseif node:is(ast.typed.expr.Release) then
     return analyze_privileges.expr_release(cx, node, privilege_map)
+
+  elseif node:is(ast.typed.expr.AttachHDF5) then
+    return analyze_privileges.expr_attach_hdf5(cx, node, privilege_map)
+
+  elseif node:is(ast.typed.expr.DetachHDF5) then
+    return analyze_privileges.expr_detach_hdf5(cx, node, privilege_map)
 
   elseif node:is(ast.typed.expr.Unary) then
     return analyze_privileges.expr_unary(cx, node, privilege_map)
@@ -2269,6 +2286,32 @@ end
 local function as_release_expr(cx, args, field_paths,
                                annotations, span, privilege_map)
   local label = flow.node.Release {
+    field_paths = field_paths,
+    annotations = annotations,
+    span = span,
+  }
+  local compute_nid = add_node(cx, label)
+  add_args(cx, compute_nid, args)
+  sequence_depend(cx, compute_nid)
+  return attach_result(privilege_map, compute_nid)
+end
+
+local function as_attach_hdf5_expr(cx, args, field_paths,
+                                   annotations, span, privilege_map)
+  local label = flow.node.AttachHDF5 {
+    field_paths = field_paths,
+    annotations = annotations,
+    span = span,
+  }
+  local compute_nid = add_node(cx, label)
+  add_args(cx, compute_nid, args)
+  sequence_depend(cx, compute_nid)
+  return attach_result(privilege_map, compute_nid)
+end
+
+local function as_detach_hdf5_expr(cx, args, field_paths,
+                                   annotations, span, privilege_map)
+  local label = flow.node.DetachHDF5 {
     field_paths = field_paths,
     annotations = annotations,
     span = span,
@@ -2820,6 +2863,26 @@ function flow_from_ast.expr_release(cx, node, privilege_map, init_only)
     node.annotations, node.span, privilege_map)
 end
 
+function flow_from_ast.expr_attach_hdf5(cx, node, privilege_map, init_only)
+  local region = flow_from_ast.expr_region_root(cx, node.region, reads_writes)
+  local filename = flow_from_ast.expr(cx, node.filename, reads)
+  local mode = flow_from_ast.expr(cx, node.mode, reads)
+
+  local inputs = terralib.newlist({region, filename, mode})
+  return as_attach_hdf5_expr(
+    cx, inputs, node.region.fields,
+    node.annotations, node.span, privilege_map)
+end
+
+function flow_from_ast.expr_detach_hdf5(cx, node, privilege_map, init_only)
+  local region = flow_from_ast.expr_region_root(cx, node.region, reads_writes)
+
+  local inputs = terralib.newlist({region})
+  return as_detach_hdf5_expr(
+    cx, inputs, node.region.fields,
+    node.annotations, node.span, privilege_map)
+end
+
 function flow_from_ast.expr_unary(cx, node, privilege_map, init_only)
   local rhs = flow_from_ast.expr(cx, node.rhs, reads)
   return as_opaque_expr(
@@ -2998,6 +3061,12 @@ function flow_from_ast.expr(cx, node, privilege_map, init_only)
 
   elseif node:is(ast.typed.expr.Release) then
     return flow_from_ast.expr_release(cx, node, privilege_map, init_only)
+
+  elseif node:is(ast.typed.expr.AttachHDF5) then
+    return flow_from_ast.expr_attach_hdf5(cx, node, privilege_map, init_only)
+
+  elseif node:is(ast.typed.expr.DetachHDF5) then
+    return flow_from_ast.expr_detach_hdf5(cx, node, privilege_map, init_only)
 
   elseif node:is(ast.typed.expr.Unary) then
     return flow_from_ast.expr_unary(cx, node, privilege_map, init_only)

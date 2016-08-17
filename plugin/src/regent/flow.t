@@ -111,6 +111,8 @@ function graph:node_minimum_port(node)
     label:is(flow.node.Fill) or
     label:is(flow.node.Acquire) or
     label:is(flow.node.Release) or
+    label:is(flow.node.AttachHDF5) or
+    label:is(flow.node.DetachHDF5) or
     label:is(flow.node.Open) or
     label:is(flow.node.Close)
   then
@@ -902,6 +904,7 @@ function graph:printpretty(ids, types, metadata)
       node:is(flow.node.Task) or
       node:is(flow.node.Copy) or node:is(flow.node.Fill) or
       node:is(flow.node.Acquire) or node:is(flow.node.Release) or
+      node:is(flow.node.AttachHDF5) or node:is(flow.node.DetachHDF5) or
       node:is(flow.node.ctrl)
     then
       shape = "rectangle"
@@ -965,6 +968,8 @@ flow.node:leaf("Copy", {"src_field_paths", "dst_field_paths",
 flow.node:leaf("Fill", {"dst_field_paths", "annotations", "span"})
 flow.node:leaf("Acquire", {"field_paths", "annotations", "span"})
 flow.node:leaf("Release", {"field_paths", "annotations", "span"})
+flow.node:leaf("AttachHDF5", {"field_paths", "annotations", "span"})
+flow.node:leaf("DetachHDF5", {"field_paths", "annotations", "span"})
 
 flow.node:leaf("Open", {})
 flow.node:leaf("Close", {})
