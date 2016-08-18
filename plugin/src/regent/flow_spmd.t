@@ -779,7 +779,7 @@ local function normalize_communication_subgraph(cx, shard_loop)
         end
       end
       newer_regions:sort(
-        function(a, b) return region_versions[a] < region_versions[b] end)
+        function(a, b) return region_versions[a][field_path] < region_versions[b][field_path] end)
       if #newer_regions > 0 then
         local current_nid = region_nids[region_type][field_path]
         local current_label = block_cx.graph:node_label(current_nid)
