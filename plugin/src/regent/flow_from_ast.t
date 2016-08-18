@@ -1183,8 +1183,10 @@ local function privilege_summary_region(cx, usage, strip, skip_regions)
           if ancestor and
             not (privilege == "none" or
                  other_privilege == "none" or
-                 (privilege == "reads" and other_privilege == "reads") or
-                 (privilege == other_privilege and std.is_reduction_op(privilege)) or
+                 (privilege == "reads" and other_privilege == "reads" and
+                    cx.tree:is_sibling(region_type, other)) or
+                 (privilege == other_privilege and std.is_reduction_op(privilege) and
+                    cx.tree:is_sibling(region_type, other)) or
                    not cx.tree:can_alias(region_type, other))
           then
             next_summary[ancestor] = std.meet_privilege(

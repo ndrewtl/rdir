@@ -311,18 +311,23 @@ function region_tree:children(region_type)
   return result
 end
 
+function region_tree:is_sibling(region_type, other_region_type)
+  local is_subregion = std.check_constraint(
+    self, std.constraint(region_type, other_region_type, std.subregion))
+  local is_superregion = std.check_constraint(
+    self, std.constraint(other_region_type, region_type, std.subregion))
+  local is_disjoint = std.check_constraint(
+    self, std.constraint(region_type, other_region_type, std.disjointness))
+  return other_region_type ~= region_type and
+    not (is_subregion or is_superregion or is_disjoint)
+end
+
 function region_tree:siblings(region_type)
   assert(flow_region_tree.is_region(region_type))
 
   local siblings = terralib.newlist()
   for other, _ in pairs(self.region_universe) do
-    local is_subregion = std.check_constraint(
-      self, std.constraint(region_type, other, std.subregion))
-    local is_superregion = std.check_constraint(
-      self, std.constraint(other, region_type, std.subregion))
-    local is_disjoint = std.check_constraint(
-      self, std.constraint(region_type, other, std.disjointness))
-    if other ~= region_type and not (is_subregion or is_superregion or is_disjoint) then
+    if self:is_sibling(region_type, other) then
       siblings:insert(other)
     end
   end
