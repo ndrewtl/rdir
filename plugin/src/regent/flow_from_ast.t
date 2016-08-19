@@ -542,6 +542,7 @@ end
 
 function region_tree_state:set_current(region_type, nid)
   assert(rawget(self.region_tree_state, region_type))
+  assert(flow.is_valid_node(nid))
   self.region_tree_state[region_type].current = nid
 end
 
@@ -552,6 +553,7 @@ end
 
 function region_tree_state:set_open(region_type, nid)
   assert(rawget(self.region_tree_state, region_type))
+  assert(flow.is_null(nid) or flow.is_valid_node(nid))
   self.region_tree_state[region_type].open = nid
 end
 
@@ -562,6 +564,7 @@ end
 
 function region_tree_state:set_dirty(region_type, dirty)
   assert(rawget(self.region_tree_state, region_type))
+  assert(type(dirty) == "boolean")
   self.region_tree_state[region_type].dirty = dirty
 end
 
@@ -999,6 +1002,7 @@ end
 
 local function open_region_tree_top_finalize(cx, path, privilege, field_path, current_nid)
   local desired_mode, desired_op = privilege_mode(privilege)
+  assert(flow.is_valid_node(current_nid))
   local next_nid
   if desired_mode == modes.write then
     next_nid = add_node(cx, cx.graph:node_label(current_nid))
