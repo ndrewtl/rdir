@@ -442,6 +442,20 @@ local function find_matching_output(cx, op_nid, region_type, field_path)
     op_nid))
 end
 
+local function find_match_backwards(cx, op_nid, region_type, field_path)
+  return maybe(cx.graph:filter_nodes(
+    function(nid, label)
+      return label:is(flow.node.data) and
+        label.region_type == region_type and
+        (not field_path or label.field_path == field_path) and
+        cx.graph:reachable(
+          nid, op_nid,
+          function(edge)
+            return edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write)
+          end)
+    end))
+end
+
 local function find_predecessor_maybe(cx, nid)
   local preds = cx.graph:filter_immediate_predecessors_by_edges(
     function(edge)
@@ -573,28 +587,45 @@ local function normalize_communication_subgraph(cx, shard_loop)
       local input_nid = find_matching_input(
         block_cx, close_nid, result_label.region_type, result_label.field_path)
       if not input_nid then
-        -- Otherwise look for a parent of the region.
+        -- Otherwise look for the region elsewhere in the
+        -- backwards-traversable graph. There are two cases:
+        --
+        --  1. If the region doesn't exist *at all*, just create it.
+        --  2. If the region does exist, hook up to the appropriate node.
+
         local parent_nid = find_matching_input(
           block_cx, close_nid,
           block_cx.tree:parent(result_label.region_type), result_label.field_path)
         assert(parent_nid)
-        -- Try to find the region among the parent's sources, if any.
-        local parent_close_nid = find_predecessor_maybe(block_cx, parent_nid)
-        if parent_close_nid then
-          assert(block_cx.graph:node_label(parent_close_nid):is(flow.node.Close))
-          input_nid = find_matching_input(
-            block_cx, parent_close_nid,
-            result_label.region_type, result_label.field_path)
-          assert(input_nid)
-          block_cx.graph:add_edge(
-            flow.edge.Read(flow.default_mode()), input_nid, block_cx.graph:node_result_port(input_nid),
-            close_nid, block_cx.graph:node_available_port(close_nid))
-        else
-          -- Otherwise just duplicate it.
+
+        local any_input_nid = find_match_backwards(
+          block_cx, close_nid, result_label.region_type, result_label.field_path)
+        if not any_input_nid then
+          -- 1. Region doesn't exist; just create it.
           input_nid = block_cx.graph:add_node(result_label)
           block_cx.graph:copy_outgoing_edges(
             function(edge) return edge.to_node == close_nid end, parent_nid, input_nid)
           detach_nids:insert(parent_nid)
+        else
+          -- 2. Region exists, somewhere back in the graph.
+
+          -- This gets hard. For now, just pattern match cases we know
+          -- how to handle and assert if we hit a more general case.
+
+          -- Try to find the region among the parent's sources, if any.
+          local parent_close_nid = find_predecessor_maybe(block_cx, parent_nid)
+          if parent_close_nid then
+            assert(block_cx.graph:node_label(parent_close_nid):is(flow.node.Close))
+            input_nid = find_matching_input(
+              block_cx, parent_close_nid,
+              result_label.region_type, result_label.field_path)
+            assert(input_nid)
+            block_cx.graph:add_edge(
+              flow.edge.Read(flow.default_mode()), input_nid, block_cx.graph:node_result_port(input_nid),
+              close_nid, block_cx.graph:node_available_port(close_nid))
+          else
+            assert(false)
+          end
         end
       end
     end
@@ -760,7 +791,7 @@ local function normalize_communication_subgraph(cx, shard_loop)
   end
 
   -- Check for and update out-of-date data.
-  local final_close_nids = terralib.newlist()
+  local previous_close_nids = block_cx.graph:filter_nodes(function(_, label) return label:is(flow.node.Close) end)
   for region_type, r1 in region_nids:items() do
     for field_path, _ in r1:items() do
       local newer_regions = terralib.newlist()
@@ -778,8 +809,45 @@ local function normalize_communication_subgraph(cx, shard_loop)
           end
         end
       end
+
+      -- There is a potential inefficiency here, in that some newer regions
+      -- may themselves be the result of a close. In such cases, any
+      -- 'interesting' data contained in the newer region is actually
+      -- contained in a previous newer region. Remove the redundant regions.
+      do
+        local newer_regions_by_version = data.new_recursive_map(1)
+        for _, r in ipairs(newer_regions) do
+          local v = region_versions[r][field_path]
+          newer_regions_by_version[v][r] = true
+        end
+
+        local fresh_newer_regions = terralib.newlist()
+        for _, regions in newer_regions_by_version:items() do
+          for _, r1 in regions:keys() do
+            local fresh = true
+            for _, r2 in regions:keys() do
+              if not std.type_eq(r1, r2) and block_cx.graph:reachable(
+                region_nids[r2][field_path], region_nids[r1][field_path],
+                function(edge)
+                  return edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write)
+                end)
+              then
+                fresh = false
+                break
+              end
+            end
+            if fresh then
+              fresh_newer_regions:insert(r1)
+            end
+          end
+        end
+        newer_regions = fresh_newer_regions
+      end
+
+      -- Apply updates in the original order.
       newer_regions:sort(
         function(a, b) return region_versions[a][field_path] < region_versions[b][field_path] end)
+
       if #newer_regions > 0 then
         local current_nid = region_nids[region_type][field_path]
         local current_label = block_cx.graph:node_label(current_nid)
@@ -807,13 +875,13 @@ local function normalize_communication_subgraph(cx, shard_loop)
               other_nid, block_cx.graph:node_result_port(other_nid),
               close_nid, block_cx.graph:node_available_port(close_nid))
 
-            for _, nid in ipairs(final_close_nids) do
+            for _, nid in ipairs(previous_close_nids) do
               block_cx.graph:add_edge(
                 flow.edge.HappensBefore {},
-                close_nid, block_cx.graph:node_sync_port(close_nid),
-                nid, block_cx.graph:node_sync_port(nid))
+                nid, block_cx.graph:node_sync_port(nid),
+                close_nid, block_cx.graph:node_sync_port(close_nid))
             end
-            final_close_nids:insert(close_nid)
+            previous_close_nids:insert(close_nid)
 
             current_nid = next_nid
           end
