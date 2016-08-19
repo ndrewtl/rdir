@@ -591,6 +591,17 @@ function region_tree_state:open_siblings(region_type)
   return result
 end
 
+function region_tree_state:current_siblings(region_type)
+  local result = terralib.newlist()
+  for _, sibling in ipairs(self.tree:siblings(region_type)) do
+    self:ensure(sibling)
+    if flow.is_valid_node(self:current(sibling)) then
+      result:insert(sibling)
+    end
+  end
+  return result
+end
+
 function region_tree_state:dirty_siblings(region_type)
   local result = terralib.newlist()
   for _, sibling in ipairs(self.tree:siblings(region_type)) do
@@ -934,9 +945,7 @@ local function select_transition(cx, path, index,
         return modes.read, desired_op, transitions.nothing
       else
         if desired_mode == modes.reduce or
-          -- FIXME: Is there a bug here? What about closed but
-          -- currently-being-read siblings?
-          #cx:state(field_path):open_siblings(path[child_index]) > 0
+          #cx:state(field_path):current_siblings(path[child_index]) > 0
         then
           return desired_mode, desired_op, transitions.close_and_reopen
         else
