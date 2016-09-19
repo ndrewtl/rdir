@@ -619,6 +619,15 @@ local function normalize_communication_subgraph(cx, shard_loop)
             input_nid = find_matching_input(
               block_cx, parent_close_nid,
               result_label.region_type, result_label.field_path)
+              while input_nid == nil do
+                parent_nid = find_matching_input(
+                  block_cx, parent_close_nid,
+                  block_cx.tree:parent(result_label.region_type), result_label.field_path)
+                parent_close_nid = find_predecessor_maybe(block_cx, parent_nid)
+                input_nid = find_matching_input(
+                  block_cx, parent_close_nid,
+                  result_label.region_type, result_label.field_path)
+              end
             assert(input_nid)
             block_cx.graph:add_edge(
               flow.edge.Read(flow.default_mode()), input_nid, block_cx.graph:node_result_port(input_nid),
