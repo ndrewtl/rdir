@@ -76,6 +76,13 @@ end
 
 local flow_spmd = {}
 
+local function isnt_happens_before(edge)
+  return not edge.label:is(flow.edge.HappensBefore)
+end
+local function is_reduce(edge)
+  return edge.label:is(flow.edge.Reduce)
+end
+
 local function is_leaf(cx, nid)
   local label = cx.graph:node_label(nid)
   if not label:is(flow.node.ctrl.ForNum) and
@@ -563,11 +570,12 @@ local function normalize_communication_subgraph(cx, shard_loop)
   --
   --  1. Normalize close inputs (to ensure all partitions exist at version 0).
   --  2. Remove opens (and regions used as intermediates).
-  --  3. Normalize close outputs (remove spurious closes and close-outputs).
-  --  4. Normalize final state (to ensure consistent final versions).
-  --  5. Add reduction self-closes (for reductions involved in communication).
-  --  6. Prune edges from read-reduce conflicts to avoid spurious copies.
-  --  7. Fix up outer context to avoid naming intermediate regions.
+  --  3. Remove trivial closes (consumed only by other closes).
+  --  4. Normalize close outputs (remove spurious closes and close-outputs).
+  --  5. Normalize final state (to ensure consistent final versions).
+  --  6. Add reduction self-closes (for reductions involved in communication).
+  --  7. Prune edges from read-reduce conflicts to avoid spurious copies.
+  --  8. Fix up outer context to avoid naming intermediate regions.
 
   local shard_label = cx.graph:node_label(shard_loop)
   local block_cx = cx:new_graph_scope(shard_label.block)
@@ -655,8 +663,60 @@ local function normalize_communication_subgraph(cx, shard_loop)
     block_cx.graph:remove_node(open_nid)
   end
 
+  -- Remove trivial closes.
+  for _, close_nid in ipairs(close_nids) do
+    -- Trivial closes are ones where the output of the close is
+    -- immediately consumed only by close nodes.
+    local has_nonclose, has_close, has_no_reduction
+    local result_nids = block_cx.graph:filter_immediate_successors_by_edges(
+      isnt_happens_before, close_nid)
+    for _, result_nid in ipairs(result_nids) do
+      has_no_reduction = #block_cx.graph:filter_immediate_predecessors_by_edges(
+        is_reduce, result_nid) == 0
+      if not has_no_reduction then break end
+
+      local consumer_nids =
+        block_cx.graph:filter_immediate_successors_by_edges(
+          isnt_happens_before, result_nid)
+      for _, consumer_nid in ipairs(consumer_nids) do
+        if block_cx.graph:node_label(consumer_nid):is(flow.node.Close) then
+          has_close = true
+        end
+        if not block_cx.graph:node_label(consumer_nid):is(flow.node.Close) then
+          has_nonclose = true
+        end
+        if has_close and has_nonclose then break end
+      end
+      if has_close and has_nonclose then break end
+    end
+
+    local is_trivial = has_close and not has_nonclose and has_no_reduction
+    if is_trivial then
+      local source_nids = block_cx.graph:filter_immediate_predecessors_by_edges(
+        isnt_happens_before, close_nid)
+      local result_nids = block_cx.graph:filter_immediate_successors_by_edges(
+        isnt_happens_before, close_nid)
+      for _, result_nid in ipairs(result_nids) do
+        local consumer_nids =
+          block_cx.graph:filter_immediate_successors_by_edges(
+            isnt_happens_before, result_nid)
+        for _, source_nid in ipairs(source_nids) do
+          for _, consumer_nid in ipairs(consumer_nids) do
+            block_cx.graph:copy_outgoing_edges(
+              function(edge) return edge.to_node == consumer_nid end,
+              result_nid, source_nid, false)
+          end
+        end
+        block_cx.graph:remove_node(result_nid)
+      end
+      block_cx.graph:remove_node(close_nid)
+    end
+  end
+
   -- Normalize close outputs.
   local versions = compute_version_numbers(block_cx)
+  local close_nids = block_cx.graph:filter_nodes(
+    function(nid, label) return label:is(flow.node.Close) end)
   for _, close_nid in ipairs(close_nids) do
     local result_nids = block_cx.graph:immediate_successors(close_nid)
     local versions_changed = 0
@@ -3992,19 +4052,22 @@ local function find_nid_mapping(cx, old_loop, new_loop,
                                 barriers_full_in, barriers_full_out,
                                 collective_types, start_barrier,
                                 global_vars, mapping)
+  local function subtree_contains(old_type, new_type)
+    if (mapping[old_type] or old_type) == new_type then
+      return true
+    end
+    for _, child_type in ipairs(cx.tree:children(old_type)) do
+      if subtree_contains(child_type, new_type) then
+        return true
+      end
+    end
+  end
+
   local function matches(new_label)
     return function(nid, label)
       if label:is(flow.node.data) then
         if label.field_path == new_label.field_path then
-          local region_type = mapping[label.region_type] or label.region_type
-          if region_type == new_label.region_type then
-            return true
-          end
-          for _, child_type in ipairs(cx.tree:children(label.region_type)) do
-            if mapping[child_type] == new_label.region_type then
-              return true
-            end
-          end
+          return subtree_contains(label.region_type, new_label.region_type)
         end
       end
     end
