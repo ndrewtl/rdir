@@ -736,10 +736,7 @@ local function normalize_communication_subgraph(cx, shard_loop)
       local input_nids = block_cx.graph:immediate_predecessors(close_nid)
       for _, input_nid in ipairs(input_nids) do
         local input_label = block_cx.graph:node_label(input_nid)
-        local result_nid = find_matching_output(
-          block_cx, close_nid, input_label.region_type, input_label.field_path)
-        if result_nid and
-          #block_cx.graph:filter_immediate_predecessors_by_edges(
+        if #block_cx.graph:filter_immediate_predecessors_by_edges(
             function(edge)
               local label = block_cx.graph:node_label(edge.from_node)
               return (edge.label:is(flow.edge.Write) or edge.label:is(flow.edge.Reduce)) and
@@ -750,6 +747,7 @@ local function normalize_communication_subgraph(cx, shard_loop)
           contributor_nids:insert(input_nid)
         end
       end
+      assert(#contributor_nids > 0)
 
       local last_split
       for _, result_nid in ipairs(result_nids) do
