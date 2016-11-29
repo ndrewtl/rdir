@@ -79,15 +79,24 @@ local function split_reduction_edges_at_node(cx, nid)
     inputs)
 
   if #reductions > 0 then
+    local label = cx.graph:node_label(nid)
+    local writes = data.filter(
+      function(edge)
+        return
+          not (label:is(flow.node.data.Scalar) and label.fresh) and
+          edge.label:is(flow.edge.Write)
+      end,
+      inputs)
     local nonreductions = data.filter(
       function(edge)
         return not (edge.label:is(flow.edge.Reduce) or
-                      edge.label:is(flow.edge.Arrive))
+                      edge.label:is(flow.edge.Arrive) or
+                      (not (label:is(flow.node.data.Scalar) and label.fresh) and
+                         edge.label:is(flow.edge.Write)))
       end,
       inputs)
     local outputs = cx.graph:outgoing_edges(nid)
 
-    local label = cx.graph:node_label(nid)
     local output_label = label
     if output_label:is(flow.node.data.Scalar) then
       output_label = output_label { fresh = false }
@@ -99,6 +108,10 @@ local function split_reduction_edges_at_node(cx, nid)
       cx.graph:add_edge(
         flow.edge.None(flow.default_mode()), nid_input, cx.graph:node_result_port(nid_input),
         edge.from_node, edge.from_port)
+      cx.graph:add_edge(
+        edge.label, edge.from_node, edge.from_port, nid_output, edge.to_port)
+    end
+    for _, edge in ipairs(writes) do
       cx.graph:add_edge(
         edge.label, edge.from_node, edge.from_port, nid_output, edge.to_port)
     end
@@ -119,6 +132,35 @@ local function split_reduction_edges(cx)
     function(nid, label) return label:is(flow.node.data) end)
   for _, nid in ipairs(nids) do
     split_reduction_edges_at_node(cx, nid)
+  end
+end
+
+local function get_RedAW_edges(cx, edges)
+  return function(from_node, from_port, from_label, to_node, to_port, to_label, label)
+    if label:is(flow.edge.Reduce) or label:is(flow.edge.Arrive) then
+      local writers = cx.graph:filter_immediate_predecessors_by_edges(
+        function(edge) return edge.label:is(flow.edge.Write) end,
+        to_node)
+      for _, writer in ipairs(writers) do
+        if writer ~= from_node and
+          not cx.graph:reachable(writer, from_node) and
+          not cx.graph:reachable(from_node, writer)
+        then
+          edges:insert({ from_node = writer, to_node = from_node })
+        end
+      end
+    end
+  end
+end
+
+local function add_RedAW_edges(cx)
+  local edges = terralib.newlist()
+  cx.graph:traverse_edges(get_RedAW_edges(cx, edges))
+  for _, edge in ipairs(edges) do
+    cx.graph:add_edge(
+      flow.edge.HappensBefore {},
+      edge.from_node, cx.graph:node_sync_port(edge.from_node),
+      edge.to_node, cx.graph:node_sync_port(edge.to_node))
   end
 end
 
@@ -172,6 +214,7 @@ end
 local function augment_graph(cx)
   split_reduction_edges(cx)
   add_WAR_edges(cx)
+  add_RedAW_edges(cx)
 end
 
 local flow_to_ast = {}
