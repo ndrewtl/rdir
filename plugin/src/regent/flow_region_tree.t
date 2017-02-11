@@ -258,8 +258,9 @@ end
 function region_tree:can_alias(region_type, other_region_type)
   assert(flow_region_tree.is_region(region_type))
   assert(flow_region_tree.is_region(other_region_type))
-  return not std.check_constraint(
-    self, std.constraint(region_type, other_region_type, std.disjointness))
+  return not std.type_maybe_eq(region_type:fspace(), other_region_type:fspace()) and
+    not std.check_constraint(
+      self, std.constraint(region_type, other_region_type, std.disjointness))
 end
 
 function region_tree:ancestors(region_type)
@@ -312,6 +313,10 @@ function region_tree:children(region_type)
 end
 
 function region_tree:is_sibling(region_type, other_region_type)
+  if not std.type_maybe_eq(region_type:fspace(), other_region_type:fspace()) then
+    return false
+  end
+
   local is_subregion = std.check_constraint(
     self, std.constraint(region_type, other_region_type, std.subregion))
   local is_superregion = std.check_constraint(
