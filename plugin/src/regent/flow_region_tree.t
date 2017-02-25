@@ -258,7 +258,7 @@ end
 function region_tree:can_alias(region_type, other_region_type)
   assert(flow_region_tree.is_region(region_type))
   assert(flow_region_tree.is_region(other_region_type))
-  return not std.type_maybe_eq(region_type:fspace(), other_region_type:fspace()) and
+  return std.type_maybe_eq(region_type:fspace(), other_region_type:fspace()) and
     not std.check_constraint(
       self, std.constraint(region_type, other_region_type, std.disjointness))
 end
