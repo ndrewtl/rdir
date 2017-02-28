@@ -1615,6 +1615,12 @@ function analyze_privileges.expr_advance(cx, node, privilege_map)
   return analyze_privileges.expr(cx, node.value, reads)
 end
 
+function analyze_privileges.expr_adjust(cx, node, privilege_map)
+  return privilege_meet(
+    analyze_privileges.expr(cx, node.barrier, reads),
+    analyze_privileges.expr(cx, node.value, reads))
+end
+
 function analyze_privileges.expr_arrive(cx, node, privilege_map)
   return privilege_meet(
     analyze_privileges.expr(cx, node.barrier, reads),
@@ -1848,6 +1854,9 @@ function analyze_privileges.expr(cx, node, privilege_map)
 
   elseif node:is(ast.typed.expr.Advance) then
     return analyze_privileges.expr_advance(cx, node, privilege_map)
+
+  elseif node:is(ast.typed.expr.Adjust) then
+    return analyze_privileges.expr_adjust(cx, node, privilege_map)
 
   elseif node:is(ast.typed.expr.Arrive) then
     return analyze_privileges.expr_arrive(cx, node, privilege_map)
@@ -2800,6 +2809,16 @@ function flow_from_ast.expr_advance(cx, node, privilege_map, init_only)
     privilege_map)
 end
 
+function flow_from_ast.expr_adjust(cx, node, privilege_map, init_only)
+  local barrier = flow_from_ast.expr(cx, node.barrier, reads)
+  local value = flow_from_ast.expr(cx, node.value, reads)
+  return as_opaque_expr(
+    cx,
+    function(v1, v2) return node { barrier = v1, value = v2 } end,
+    terralib.newlist({barrier, value}),
+    privilege_map)
+end
+
 function flow_from_ast.expr_arrive(cx, node, privilege_map, init_only)
   local barrier = flow_from_ast.expr(cx, node.barrier, reads)
   local value = node.value and flow_from_ast.expr(cx, node.value, reads)
@@ -3058,6 +3077,9 @@ function flow_from_ast.expr(cx, node, privilege_map, init_only)
 
   elseif node:is(ast.typed.expr.Advance) then
     return flow_from_ast.expr_advance(cx, node, privilege_map, init_only)
+
+  elseif node:is(ast.typed.expr.Adjust) then
+    return flow_from_ast.expr_adjust(cx, node, privilege_map, init_only)
 
   elseif node:is(ast.typed.expr.Arrive) then
     return flow_from_ast.expr_arrive(cx, node, privilege_map, init_only)
