@@ -1824,6 +1824,29 @@ local function issue_barrier_preadvance(cx, v1_nid)
   return v0_nid
 end
 
+local function issue_barrier_adjust(cx, barrier_nid, delta)
+  local barrier_label = cx.graph:node_label(barrier_nid)
+
+  local adjust_label = flow.node.Opaque {
+    action = ast.typed.stat.Expr {
+      expr = ast.typed.expr.Adjust {
+        barrier = barrier_label.value,
+        value = make_constant(delta, int, barrier_label.value.span),
+        expr_type = barrier_label.value.expr_type,
+        annotations = ast.default_annotations(),
+        span = barrier_label.value.span,
+      },
+      annotations = ast.default_annotations(),
+      span = barrier_label.value.span,
+    }
+  }
+  local adjust_nid = cx.graph:add_node(adjust_label)
+  cx.graph:add_edge(
+    flow.edge.Arrive {}, adjust_nid, 1,
+    barrier_nid, cx.graph:node_available_port(barrier_nid))
+  return adjust_nid
+end
+
 local function index_phase_barriers(cx, loop_label, bar_list_label)
   -- Find the loop index for this loop.
   local index_nids = cx.graph:filter_nodes(
@@ -2295,33 +2318,34 @@ local function issue_intersection_copy_synchronization_backwards(
       prev_consumer_nids = cx.graph:incoming_write_set(final_nid)
     end
   end
-  -- If there were more than one of these, we would need to increase
-  -- the expected arrival count. Try to reduce the set size to one by
-  -- finding a consumer which dominates the others.
+  -- If there are more than one of these, we need to increase the
+  -- expected arrival count. Try to reduce the number of arrivers by
+  -- filtering out backwards-dominated consumers.
   assert(#prev_consumer_nids > 0)
-  local prev_consumer_nid
-  for _, nid in ipairs(prev_consumer_nids) do
-    local dominates = true
-    for _, other_nid in ipairs(prev_consumer_nids) do
-      if not cx.graph:reachable(
-        other_nid, nid,
-        function(edge)
-          return edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write)
-        end)
-      then
-        dominates = false
-        break
+  prev_consumer_nids = data.filter(
+    function(nid)
+      local dominated = false
+      for _, other_nid in ipairs(prev_consumer_nids) do
+        if nid ~= other_nid and cx.graph:reachable(
+          nid, other_nid,
+          function(edge)
+            return edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write)
+          end)
+        then
+          dominated = true
+          break
+        end
       end
-    end
-    if dominates then
-      prev_consumer_nid = nid
-      break
-    end
-  end
-  assert(prev_consumer_nid)
-  -- Right now the synchronization will get messed up if any
+      return not dominated
+    end,
+    prev_consumer_nids)
+  assert(#prev_consumer_nids > 0)
+
+  -- Right now the synchronization will get messed up if any previous
   -- consumer is an inner loop, so just assert that it's not.
-  assert(not is_inner(cx, prev_consumer_nid), "previous consumer is inner loop")
+  for _, nid in ipairs(prev_consumer_nids) do
+    assert(not is_inner(cx, nid), "previous consumer is inner loop")
+  end
 
   local function get_current_instance(cx, label)
     return find_first_instance(cx, label, true) or cx.graph:add_node(label)
@@ -2348,8 +2372,28 @@ local function issue_intersection_copy_synchronization_backwards(
   local empty_in_nid = (prev_consumer_wrapped and empty_in_vn_nid) or empty_in_vi_nid
   local empty_out_nid = empty_out_vi1_nid
 
+  if #prev_consumer_nids > 1 then
+    -- Adjust arrival count of in barrier.
+    local adjust_nid = issue_barrier_adjust(
+      cx, empty_in_nid, #prev_consumer_nids - 1)
+
+    -- Make sure adjustment is sequenced properly with other operations.
+    cx.graph:add_edge(
+      flow.edge.HappensBefore {},
+      dst_in_nid, cx.graph:node_sync_port(dst_in_nid),
+      adjust_nid, cx.graph:node_sync_port(adjust_nid))
+    for _, prev_consumer_nid in ipairs(prev_consumer_nids) do
+      cx.graph:add_edge(
+        flow.edge.HappensBefore {},
+        adjust_nid, cx.graph:node_sync_port(adjust_nid),
+        prev_consumer_nid, cx.graph:node_sync_port(prev_consumer_nid))
+    end
+  end
+
   issue_barrier_await(cx, empty_out_nid, copy_nid)
-  issue_barrier_arrive(cx, empty_in_nid, prev_consumer_nid)
+  for _, prev_consumer_nid in ipairs(prev_consumer_nids) do
+    issue_barrier_arrive(cx, empty_in_nid, prev_consumer_nid)
+  end
 end
 
 local function rewrite_copies_subgraph(cx, loop_nid, inverse_mapping, intersections)
