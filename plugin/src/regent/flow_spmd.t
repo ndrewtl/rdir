@@ -547,6 +547,44 @@ local function compute_version_numbers(cx)
   return versions
 end
 
+local function compute_contributions(cx)
+  local contributions = data.new_recursive_map(2)
+
+  local nids = cx.graph:toposort()
+  for _, nid in ipairs(nids) do
+    local label = cx.graph:node_label(nid)
+    if label:is(flow.node.data) then
+      local writers = cx.graph:filter_immediate_predecessors_by_edges(
+        function(edge)
+          return edge.label:is(flow.edge.Write) or
+            edge.label:is(flow.edge.Reduce)
+        end,
+        nid)
+      if #writers > 0 then
+        for _, writer_nid in ipairs(writers) do
+          local writer_label = cx.graph:node_label(writer_nid)
+          if writer_label:is(flow.node.Close) then
+            -- This version gathers contributions from the close's inputs.
+            local reads = cx.graph:filter_immediate_predecessors_by_edges(
+              function(edge) return edge.label:is(flow.edge.Read) end,
+              writer_nid)
+            for _, other_nid in ipairs(reads) do
+              for _, other_contribution in contributions[other_nid]:keys() do
+                contributions[nid][other_contribution] = true
+              end
+            end
+          else
+            -- This version actually contains fresh data; reset contributions.
+            contributions[nid][nid] = true
+          end
+        end
+      end
+    end
+  end
+
+  return contributions
+end
+
 -- Returns the leaf loops' type (ForList or ForNum).
 -- Assumes that all leaf nodes are loops of the same type.
 local function find_leaf_loop_type(cx, loop_nid)
@@ -848,6 +886,9 @@ local function normalize_communication_subgraph(cx, shard_loop)
     end
   end
 
+  -- Compute the contributions to each version of a region.
+  local contributions = compute_contributions(block_cx)
+
   -- Check for and update out-of-date data.
   local previous_close_nids = block_cx.graph:filter_nodes(function(_, label) return label:is(flow.node.Close) end)
   for region_type, r1 in region_nids:items() do
@@ -868,38 +909,54 @@ local function normalize_communication_subgraph(cx, shard_loop)
         end
       end
 
-      -- There is a potential inefficiency here, in that some newer regions
-      -- may themselves be the result of a close. In such cases, any
-      -- 'interesting' data contained in the newer region is actually
-      -- contained in a previous newer region. Remove the redundant regions.
+      -- The version check above is naive in the sense that it counts
+      -- regions as changed even if they have only been updated by
+      -- other copies.
+      --
+      -- Filter the set of newer versions to "fresh" regions,
+      -- i.e. ones which have received direct updates on their own,
+      -- and thus potentially contain data not stored elsewhere.
       do
-        local newer_regions_by_version = data.new_recursive_map(1)
-        for _, r in ipairs(newer_regions) do
-          local v = region_versions[r][field_path]
-          newer_regions_by_version[v][r] = true
-        end
+        local fresh_regions = terralib.newlist()
+        for _, newer_region in ipairs(newer_regions) do
+          local newer_nid = region_nids[newer_region][field_path]
+          local unique_contributions = contributions[newer_nid]:copy()
 
-        local fresh_newer_regions = terralib.newlist()
-        for _, regions in newer_regions_by_version:items() do
-          for _, r1 in regions:keys() do
-            local fresh = true
-            for _, r2 in regions:keys() do
-              if not std.type_eq(r1, r2) and block_cx.graph:reachable(
-                region_nids[r2][field_path], region_nids[r1][field_path],
-                function(edge)
-                  return edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write)
-                end)
-              then
-                fresh = false
-                break
+          for _, other_region in ipairs(newer_regions) do
+            if not std.type_eq(newer_region, other_region) then
+              local other_nid = region_nids[other_region][field_path]
+              for _, other_contribution in contributions[other_nid]:keys() do
+                local remove = terralib.newlist()
+                for _, newer_contribution in unique_contributions:keys() do
+                  local other_contribution_region = block_cx.graph:node_label(other_contribution).region_type
+                  local newer_contribution_region = block_cx.graph:node_label(newer_contribution).region_type
+                  if std.type_eq(other_contribution_region, newer_contribution_region) and
+                    (versions[other_contribution] > versions[newer_contribution] or
+                       (versions[other_contribution] == versions[newer_contribution] and
+                          block_cx.graph:reachable(other_nid, newer_nid)))
+                  then
+                    remove:insert(newer_contribution)
+                  end
+                end
+                for _, contribution in ipairs(remove) do
+                  unique_contributions[contribution] = false
+                end
               end
             end
-            if fresh then
-              fresh_newer_regions:insert(r1)
+          end
+
+          local fresh = false
+          for contribution, contribution_fresh in unique_contributions:items() do
+            if contribution_fresh and versions[contribution] > region_versions[region_type][field_path] then
+              fresh = true
+              break
             end
           end
+          if fresh then
+            fresh_regions:insert(newer_region)
+          end
         end
-        newer_regions = fresh_newer_regions
+        newer_regions = fresh_regions
       end
 
       -- Apply updates in the original order.
@@ -931,7 +988,7 @@ local function normalize_communication_subgraph(cx, shard_loop)
             block_cx.graph:add_edge(
               flow.edge.Read(flow.default_mode()),
               other_nid, block_cx.graph:node_result_port(other_nid),
-              close_nid, block_cx.graph:node_available_port(close_nid))
+              close_nid, 2)
 
             for _, nid in ipairs(previous_close_nids) do
               block_cx.graph:add_edge(
@@ -1730,6 +1787,11 @@ local function issue_intersection_copy(cx, src_nid, dst_in_nid, dst_out_nid, op,
     if not intersection_label then
       local intersection_type = std.list(
         std.list(dst_type:subregion_dynamic(), nil, 1), nil, 1)
+      -- FIXME: Should this be a subregion of the original list or its
+      -- own root? The regions themselves do alias at runtime, so
+      -- that's the rationale behind them being subregions, but I'm
+      -- not sure all subsequent stages will handle this properly.
+      std.add_constraint(cx.tree, intersection_type, dst_type, std.subregion, false)
       local intersection_symbol = std.newsymbol(
         intersection_type,
         "intersection_" .. tostring(src_label.value.value) .. "_" ..
