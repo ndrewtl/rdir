@@ -40,6 +40,7 @@ local flow = require("regent/flow")
 local flow_extract_subgraph = require("regent/flow_extract_subgraph")
 local flow_to_ast = require("regent/flow_to_ast")
 local optimize_config_options = require("regent/optimize_config_options")
+local optimize_copies = require("regent/optimize_copies")
 local optimize_divergence = require("regent/optimize_divergence")
 local optimize_futures = require("regent/optimize_futures")
 local optimize_index_launches = require("regent/optimize_index_launches")
@@ -421,6 +422,7 @@ local function extract_task(cx, nid, prefix, force_read_write)
   -- cyclic dependence. Name each optimization individually.
 
   -- passes.optimize(ast)
+  ast = optimize_copies.entry(ast)
   if std.config["index-launch"] then ast = optimize_index_launches.entry(ast) end
   if std.config["future"] then ast = optimize_futures.entry(ast) end
   if std.config["leaf"] then ast = optimize_config_options.entry(ast) end
