@@ -2159,7 +2159,14 @@ local function rewrite_scalar_communication_subgraph(cx, loop_nid)
   local loop_label = cx.graph:node_label(loop_nid)
   local block_cx = cx:new_graph_scope(loop_label.block)
 
+  -- We're going to do this with two collectives. First, local
+  -- contributions will be summed into a local collective. Then that
+  -- collective will be advanced and the result contributed to the
+  -- global collective, which produces the final value. This avoids
+  -- the creation of N tasks to compute the local contribution.
+
   local collectives = terralib.newlist()
+  local local_collectives = terralib.newlist()
 
   local target_nids = cx.graph:filter_immediate_successors_by_edges(
     function(edge, label)
@@ -2171,49 +2178,132 @@ local function rewrite_scalar_communication_subgraph(cx, loop_nid)
     local target_type = std.as_read(target_label.value.expr_type)
 
     local op = get_incoming_reduction_op(cx, target_nid)
+    local collective_type = std.dynamic_collective(target_type)
 
-    -- 1. Replicate the target.
+    -- ###
+    -- ### Interior of loop
+    -- ###
+
+    -- 0. Identify the local contribution.
+    local block_target_nids = block_cx.graph:filter_nodes(
+      function(nid, label)
+        return label:is(flow.node.data.Scalar) and
+          label.region_type == target_label.region_type and
+          label.field_path == target_label.field_path
+        end)
+    assert(#block_target_nids == 1) -- For now there must be exactly one.
+    local block_target_nid = block_target_nids[1]
+
+    local block_contributor_nids = block_cx.graph:filter_immediate_predecessors_by_edges(
+      function(edge, label)
+        return edge.label:is(flow.edge.Reduce)
+      end,
+      block_target_nid)
+    assert(#block_contributor_nids == 1) -- For now there must be exactly one.
+    local block_contributor_nid = block_contributor_nids[1]
+    assert(block_cx.graph:node_label(block_contributor_nid):is(flow.node.Reduce))
+
+    local block_contribution_nid = only(
+      block_cx.graph:filter_immediate_predecessors_by_edges(
+        function(edge, label)
+          return edge.label:is(flow.edge.Read)
+        end,
+        block_contributor_nid))
+    local block_contribution_label = block_cx.graph:node_label(block_contribution_nid)
+    assert(block_contribution_label:is(flow.node.data.Scalar))
+
+    -- 1. Create the local collective.
     local local_label = make_variable_label(
-      cx, terralib.newsymbol(target_type, "local_" .. tostring(target_label.value.value)),
-      target_type, target_label.value.span)
-    local local_nid = cx.graph:add_node(local_label)
+      cx, terralib.newsymbol(collective_type, "local_collective_" .. tostring(target_label.value.value)),
+      collective_type, target_label.value.span)
+    local block_local_nid = block_cx.graph:add_node(local_label)
 
-    -- 2. Initialize the replicated variable.
-    local init_value = std.reduction_op_init[op][target_type]
-    assert(init_value)
-    local var_label = flow.node.Opaque {
-      action = ast.typed.stat.Var {
-        symbols = terralib.newlist({local_label.value.value}),
-        types = terralib.newlist({target_type}),
-        values = terralib.newlist({
-            make_constant(init_value, target_type, target_label.value.span)}),
+    -- And remember it for later...
+    local_collectives:insert(data.newtuple(local_label, op))
+
+    -- 2. Arrive at the local collective with the local contribution.
+    local block_arrive_label = flow.node.Opaque {
+      action = ast.typed.stat.Expr {
+        expr = ast.typed.expr.Arrive {
+          barrier = local_label.value,
+          value = block_contribution_label.value,
+          expr_type = collective_type,
+          options = ast.default_options(),
+          span = target_label.value.span,
+        },
         options = ast.default_options(),
         span = target_label.value.span,
       }
     }
-    local var_nid = cx.graph:add_node(var_label)
+    local block_arrive_nid = block_cx.graph:add_node(block_arrive_label)
+    block_cx.graph:add_edge(
+      flow.edge.Read(flow.default_mode()),
+      block_local_nid, block_cx.graph:node_result_port(block_local_nid),
+      block_arrive_nid, block_cx.graph:node_available_port(block_arrive_nid))
+    block_cx.graph:add_edge(
+      flow.edge.Read(flow.default_mode()),
+      block_contribution_nid, block_cx.graph:node_result_port(block_contribution_nid),
+      block_arrive_nid, block_cx.graph:node_available_port(block_arrive_nid))
 
+    -- 3. Remove local references to the target.
+    block_cx.graph:remove_node(block_contributor_nid)
+    block_cx.graph:remove_node(block_target_nid)
+
+    -- ###
+    -- ### Exterior of loop
+    -- ###
+
+    -- Local collective versions for outside the loop.
+    local local_v0_nid = cx.graph:add_node(local_label)
+    local local_v1_nid = cx.graph:add_node(local_label)
+
+    -- 4. Record arrival of loop on local collective.
     cx.graph:add_edge(
-      flow.edge.HappensBefore {}, var_nid, cx.graph:node_sync_port(var_nid),
-      local_nid, cx.graph:node_sync_port(local_nid))
+      flow.edge.Arrive {},
+      loop_nid, cx.graph:node_available_port(loop_nid),
+      local_v0_nid, cx.graph:node_available_port(local_v0_nid))
+
+    -- 5. Advance the local collective.
+    local local_advance_label = flow.node.Advance {
+      expr_type = collective_type,
+      options = ast.default_options(),
+      span = target_label.value.span,
+    }
+    local local_advance_nid = cx.graph:add_node(local_advance_label)
     cx.graph:add_edge(
-      flow.edge.HappensBefore {}, var_nid, cx.graph:node_sync_port(var_nid),
-      loop_nid, cx.graph:node_sync_port(loop_nid))
+      flow.edge.Read(flow.default_mode()),
+      local_v0_nid, cx.graph:node_result_port(local_v0_nid),
+      local_advance_nid, 1)
+    cx.graph:add_edge(
+      flow.edge.Write(flow.default_mode()),
+      local_advance_nid, cx.graph:node_result_port(local_advance_nid),
+      local_v1_nid, cx.graph:node_available_port(local_v1_nid))
 
-    -- 3. Replace the target with the replicated value inside the loop.
-    block_cx.graph:map_nodes_recursive(
-      function(graph, nid, label)
-        if label:is(flow.node.data.Scalar) and
-          label.region_type == target_label.region_type and
-          label.field_path == target_label.field_path
-        then
-          return local_label
-        end
-        return label
-    end)
+    -- 6. Retrieve the local contribution value.
+    local contribution_label = make_variable_label(
+      cx, terralib.newsymbol(target_type, "local_" .. tostring(target_label.value.value)),
+      target_type, target_label.value.span) { fresh = true }
+    local contribution_nid = cx.graph:add_node(contribution_label)
 
-    -- 4. Create the collective.
-    local collective_type = std.dynamic_collective(target_type)
+    local local_result_label = flow.node.Opaque {
+      action = ast.typed.expr.DynamicCollectiveGetResult {
+        value = local_label.value,
+        expr_type = target_type,
+        options = ast.default_options(),
+        span = target_label.value.span,
+      }
+    }
+    local local_result_nid = cx.graph:add_node(local_result_label)
+    cx.graph:add_edge(
+      flow.edge.Read(flow.default_mode()),
+      local_v1_nid, cx.graph:node_result_port(local_v1_nid),
+      local_result_nid, cx.graph:node_available_port(local_result_nid))
+    cx.graph:add_edge(
+      flow.edge.Write(flow.default_mode()),
+      local_result_nid, cx.graph:node_result_port(local_result_nid),
+      contribution_nid, 0)
+
+    -- 7. Create the global collective.
     local collective_label = make_variable_label(
       cx, terralib.newsymbol(collective_type, "collective_" .. tostring(target_label.value.value)),
       collective_type, target_label.value.span)
@@ -2223,12 +2313,12 @@ local function rewrite_scalar_communication_subgraph(cx, loop_nid)
     -- And remember it for later...
     collectives:insert(data.newtuple(collective_label, op))
 
-    -- 5. Arrive at the collective with the replicated value.
+    -- 8. Arrive at the collective with the local contribution value.
     local arrive_label = flow.node.Opaque {
       action = ast.typed.stat.Expr {
         expr = ast.typed.expr.Arrive {
           barrier = collective_label.value,
-          value = local_label.value,
+          value = contribution_label.value,
           expr_type = collective_type,
           options = ast.default_options(),
           span = target_label.value.span,
@@ -2244,10 +2334,10 @@ local function rewrite_scalar_communication_subgraph(cx, loop_nid)
       arrive_nid, cx.graph:node_available_port(arrive_nid))
     cx.graph:add_edge(
       flow.edge.Read(flow.default_mode()),
-      local_nid, cx.graph:node_result_port(local_nid),
+      contribution_nid, cx.graph:node_result_port(contribution_nid),
       arrive_nid, cx.graph:node_available_port(arrive_nid))
 
-    -- 6. Advance the collective.
+    -- 9. Advance the collective.
     local advance_label = flow.node.Advance {
       expr_type = collective_type,
       options = ast.default_options(),
@@ -2268,7 +2358,7 @@ local function rewrite_scalar_communication_subgraph(cx, loop_nid)
       arrive_nid, cx.graph:node_sync_port(arrive_nid),
       advance_nid, cx.graph:node_sync_port(advance_nid))
 
-    -- 7. Retrieve the collective value and assign to the original target.
+    -- 10. Retrieve the global contribution and reduce into the target.
     local global_label = make_variable_label(
       cx, terralib.newsymbol(target_type, "global_" .. tostring(target_label.value.value)),
       target_type, target_label.value.span) { fresh = true }
@@ -2311,13 +2401,13 @@ local function rewrite_scalar_communication_subgraph(cx, loop_nid)
       global_nid, cx.graph:node_result_port(global_nid),
       reduce_nid, 2)
 
-    -- 8. Move reduction edges from target to local.
-    cx.graph:copy_incoming_edges(
+    -- 11. Remove reduction edges from target.
+    cx.graph:remove_incoming_edges(
       function(edge) return edge.label:is(flow.edge.Reduce) and edge.from_node == loop_nid end,
-      target_nid, local_nid, true)
+      target_nid)
   end
 
-  return collectives
+  return collectives, local_collectives
 end
 
 local function raise_collectives(cx, loop_nid, collectives)
@@ -2338,12 +2428,15 @@ end
 
 local function rewrite_scalar_communication(cx)
   local collectives = terralib.newlist()
+  local local_collectives = terralib.newlist()
   cx.graph:traverse_nodes_recursive(
     function(graph, nid, label)
       local inner_cx = cx:new_graph_scope(graph)
       if is_leaf(inner_cx, nid) then
-        collectives:insertall(
-          rewrite_scalar_communication_subgraph(inner_cx, nid))
+        local cs, local_cs = rewrite_scalar_communication_subgraph(
+          inner_cx, nid)
+        collectives:insertall(cs)
+        local_collectives:insertall(local_cs)
       end
     end)
   cx.graph:traverse_nodes_recursive(
@@ -2351,9 +2444,79 @@ local function rewrite_scalar_communication(cx)
       local inner_cx = cx:new_graph_scope(graph)
       if is_inner(inner_cx, nid) then
         raise_collectives(inner_cx, nid, collectives)
+        raise_collectives(inner_cx, nid, local_collectives)
       end
     end)
-  return collectives
+
+  return collectives, local_collectives
+end
+
+local function issue_local_collective_creation(cx, loop_nid, collective_nid, op, bounds)
+  local collective = cx.graph:node_label(collective_nid)
+  local collective_type = std.as_read(collective.value.expr_type)
+  local value_type = collective_type.result_type
+
+  local create_label = flow.node.Opaque {
+    action = ast.typed.stat.Var {
+      symbols = terralib.newlist({collective.value.value}),
+      types = terralib.newlist({collective_type}),
+      values = terralib.newlist({
+          ast.typed.expr.DynamicCollective {
+            arrivals = ast.typed.expr.Binary {
+              lhs = bounds[2].value,
+              rhs = bounds[1].value,
+              op = "-",
+              expr_type = int,
+              options = ast.default_options(),
+              span = collective.value.span,
+            },
+            op = op,
+            value_type = value_type,
+            expr_type = collective_type,
+            options = ast.default_options(),
+            span = collective.value.span,
+          },
+      }),
+      options = ast.default_options(),
+      span = collective.value.span,
+    }
+  }
+  local create_nid = cx.graph:add_node(create_label)
+
+  if bounds[1]:is(flow.node.data) then
+    local bound1_nid = find_matching_input(cx, loop_nid, bounds[1].region_type, bounds[1].field_path)
+    cx.graph:add_edge(
+      flow.edge.Read(flow.default_mode()), bound1_nid, cx.graph:node_result_port(bound1_nid),
+      create_nid, cx.graph:node_available_port(create_nid))
+  end
+
+  if bounds[2]:is(flow.node.data) then
+    local bound2_nid = find_matching_input(cx, loop_nid, bounds[2].region_type, bounds[2].field_path)
+    cx.graph:add_edge(
+      flow.edge.Read(flow.default_mode()), bound2_nid, cx.graph:node_result_port(bound2_nid),
+      create_nid, cx.graph:node_available_port(create_nid))
+  end
+
+  cx.graph:add_edge(
+    flow.edge.HappensBefore {}, create_nid, cx.graph:node_sync_port(create_nid),
+    collective_nid, cx.graph:node_sync_port(collective_nid))
+end
+
+local function rewrite_local_collective_creation(cx, shard_loop, bounds,
+                                                 local_collectives)
+  for _, collective in ipairs(local_collectives) do
+    local collective_label, op = unpack(collective)
+    local collective_nid = find_matching_input(cx, shard_loop, collective_label.region_type, collective_label.field_path)
+    issue_local_collective_creation(cx, shard_loop, collective_nid, op, bounds)
+  end
+
+  -- Create a mapping to local collectives from propogating.
+  local collective_mapping = {}
+  for _, collective in ipairs(local_collectives) do
+    local collective_label = unpack(collective)
+    collective_mapping[collective_label.region_type] = false
+  end
+  return collective_mapping
 end
 
 local function rewrite_shard_intersections(cx, shard_loop, intersections)
@@ -4628,14 +4791,18 @@ local function spmdize(cx, loop)
   normalize_communication(shard_cx)
   local lists, original_partitions, mapping = rewrite_shard_partitions(shard_cx)
   local original_intersections, barriers = rewrite_communication(shard_cx, shard_loop, mapping)
-  local collectives = rewrite_scalar_communication(shard_cx)
+  local collectives, local_collectives = rewrite_scalar_communication(shard_cx)
   local scratch_field_mapping = rewrite_reduction_scratch_fields(shard_cx, shard_loop)
   local intersections, intersection_mapping = rewrite_shard_intersections(
     shard_cx, shard_loop, original_intersections)
   local bounds, original_bounds = rewrite_shard_loop_bounds(shard_cx, shard_loop)
+  local collective_mapping = rewrite_local_collective_creation(
+    shard_cx, shard_loop, bounds, local_collectives)
   local start_barrier = synchronize_shard_start(shard_cx, shard_loop)
 
-  local shard_mapping = compose_mapping(scratch_field_mapping, intersection_mapping)
+  local shard_mapping = compose_mapping(
+    compose_mapping(collective_mapping, scratch_field_mapping),
+    intersection_mapping)
   local outer_shard_cx = cx:new_graph_scope(flow.empty_graph(cx.tree))
   local outer_shard_block = make_block(
     outer_shard_cx, shard_cx.graph, shard_mapping, span)
