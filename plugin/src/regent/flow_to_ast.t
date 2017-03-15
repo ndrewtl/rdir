@@ -268,7 +268,7 @@ function flow_to_ast.node_opaque(cx, nid)
         actions:insert(
           ast.typed.stat.Var {
             symbols = terralib.newlist({ input_label.value.value }),
-            types = terralib.newlist({ input_label.value.expr_type }),
+            types = terralib.newlist({ std.as_read(input_label.value.expr_type) }),
             values = terralib.newlist({
                 cx.ast[input_nid],
             }),
