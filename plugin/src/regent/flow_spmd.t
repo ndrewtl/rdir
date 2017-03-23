@@ -57,6 +57,10 @@ local vectorize_loops = require("regent/vectorize_loops")
 -- to the number of tasks per node.
 local shard_size = std.config["flow-spmd-shardsize"]
 
+-- Hack: Adjust the arrival count of local barriers by this amount to
+-- avoid a collision with the number of nodes.
+local local_collective_base = 5
+
 local context = {}
 context.__index = context
 
@@ -2809,6 +2813,23 @@ local function rewrite_scalar_communication_subgraph(cx, loop_nid)
     local local_v0_nid = cx.graph:add_node(local_label)
     local local_v1_nid = cx.graph:add_node(local_label)
 
+    -- Hack: Alter arrival count to avoid a collision with the number
+    -- of nodes.
+    local local_adjust_label = flow.node.Opaque {
+      action = ast.typed.expr.Adjust {
+        barrier = local_label.value,
+        value = make_constant(-local_collective_base, int, local_label.value.span),
+        expr_type = collective_type,
+        annotations = ast.default_annotations(),
+        span = local_label.value.span,
+      }
+    }
+    local local_adjust_nid = cx.graph:add_node(local_adjust_label)
+    cx.graph:add_edge(
+      flow.edge.HappensBefore {},
+      local_adjust_nid, cx.graph:node_sync_port(local_adjust_nid),
+      loop_nid, cx.graph:node_sync_port(loop_nid))
+
     -- 4. Record arrival of loop on local collective.
     cx.graph:add_edge(
       flow.edge.Arrive {},
@@ -3017,7 +3038,14 @@ local function issue_local_collective_creation(cx, loop_nid, collective_nid, op,
       types = terralib.newlist({collective_type}),
       values = terralib.newlist({
           ast.typed.expr.DynamicCollective {
-            arrivals = nparts.value,
+            arrivals = ast.typed.expr.Binary {
+              lhs = nparts.value,
+              rhs = make_constant(local_collective_base, int, collective.value.span),
+              op = "+",
+              expr_type = std.as_read(nparts.value.expr_type),
+              annotations = ast.default_annotations(),
+              span = collective.value.span,
+            },
             op = op,
             value_type = value_type,
             expr_type = collective_type,
