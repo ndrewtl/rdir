@@ -1599,6 +1599,12 @@ function analyze_privileges.expr_list_ispace(cx, node)
   return privilege_meet(analyze_privileges.expr(cx, node.ispace, reads))
 end
 
+function analyze_privileges.expr_list_from_element(cx, node)
+  return privilege_meet(
+    analyze_privileges.expr(cx, node.list, reads),
+    analyze_privileges.expr(cx, node.value, reads))
+end
+
 function analyze_privileges.expr_phase_barrier(cx, node)
   return analyze_privileges.expr(cx, node.value, reads)
 end
@@ -1842,6 +1848,9 @@ function analyze_privileges.expr(cx, node, privilege_map)
 
   elseif node:is(ast.typed.expr.ListIspace) then
     return analyze_privileges.expr_list_ispace(cx, node)
+
+  elseif node:is(ast.typed.expr.ListFromElement) then
+    return analyze_privileges.expr_list_from_element(cx, node)
 
   elseif node:is(ast.typed.expr.PhaseBarrier) then
     return analyze_privileges.expr_phase_barrier(cx, node)
