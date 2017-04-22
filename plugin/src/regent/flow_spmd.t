@@ -3147,7 +3147,13 @@ local function rewrite_shard_intersections(cx, shard_loop, intersections)
   return shallow_intersections, mapping, preconditions
 end
 
-local function rewrite_initial_copyin(cx, shard_loop, intersections, intersection_preconditions)
+local function rewrite_initial_copyin(cx, shard_loop, intersections, intersection_preconditions,
+                                      elide_copy, elide_mapping)
+  local inverse_mapping = {}
+  for k, v in pairs(elide_mapping) do
+    inverse_mapping[v] = k
+  end
+
   local mappings = {}
   local preconditions = {}
 
@@ -3159,289 +3165,291 @@ local function rewrite_initial_copyin(cx, shard_loop, intersections, intersectio
 
   for lhs_type, i1 in intersections:items() do
     for rhs_type, i2 in i1:items() do
-      local lhs_label = cx.graph:node_label(find_matching_input(cx, shard_loop, lhs_type))
+      if inverse_mapping[rhs_type] and not elide_copy[inverse_mapping[rhs_type]] then
+        local lhs_label = cx.graph:node_label(find_matching_input(cx, shard_loop, lhs_type))
 
-      local intersection_label
-      for field_path, label in i2:items() do
-        intersection_label = label
-        break
-      end
-      assert(intersection_label)
-      local intersection_type = intersection_label.region_type
-      local intersection_precondition_label =
-        intersection_preconditions[intersection_type]
-      local intersection_precondition_nid = cx.graph:find_node(
-          function(_, label) return label == intersection_precondition_label end)
+        local intersection_label
+        for field_path, label in i2:items() do
+          intersection_label = label
+          break
+        end
+        assert(intersection_label)
+        local intersection_type = intersection_label.region_type
+        local intersection_precondition_label =
+          intersection_preconditions[intersection_type]
+        local intersection_precondition_nid = cx.graph:find_node(
+            function(_, label) return label == intersection_precondition_label end)
 
-      local block_cx = cx:new_graph_scope(flow.empty_graph(cx.tree))
-      local span = shard_label.span
+        local block_cx = cx:new_graph_scope(flow.empty_graph(cx.tree))
+        local span = shard_label.span
 
-      local barrier_list_type = std.list(std.list(std.phase_barrier))
-      local barrier_list_symbol =
-        std.newsymbol(barrier_list_type, "copyin_barriers")
-      local barrier_list_label =
-        make_variable_label(block_cx, barrier_list_symbol, barrier_list_type, span)
-      local barrier_list_nid = cx.graph:add_node(barrier_list_label)
-      mappings[barrier_list_label.region_type] = false
+        local barrier_list_type = std.list(std.list(std.phase_barrier))
+        local barrier_list_symbol =
+          std.newsymbol(barrier_list_type, "copyin_barriers")
+        local barrier_list_label =
+          make_variable_label(block_cx, barrier_list_symbol, barrier_list_type, span)
+        local barrier_list_nid = cx.graph:add_node(barrier_list_label)
+        mappings[barrier_list_label.region_type] = false
 
-      local get_barrier_list = flow.node.Opaque {
-        action = ast.typed.stat.Var {
-          symbols = terralib.newlist({barrier_list_symbol}),
-          types = terralib.newlist({barrier_list_type}),
-          values = terralib.newlist({
-            ast.typed.expr.ListFromElement {
-              list = intersection_label.value,
-              value = barrier_label.value,
-              expr_type = barrier_list_type,
-              annotations = ast.default_annotations(),
-              span = span,
-            },
-          }),
-          annotations = ast.default_annotations(),
-          span = span,
-        }
-      }
-      local get_barrier_list_nid = cx.graph:add_node(get_barrier_list)
-      cx.graph:add_edge(
-        flow.edge.HappensBefore {}, intersection_precondition_nid,
-        cx.graph:node_sync_port(intersection_precondition_nid),
-        get_barrier_list_nid, cx.graph:node_sync_port(get_barrier_list_nid))
-      cx.graph:add_edge(
-        flow.edge.HappensBefore {},
-        get_barrier_list_nid, cx.graph:node_sync_port(get_barrier_list_nid),
-        barrier_list_nid, cx.graph:node_sync_port(barrier_list_nid))
-
-      local cond_type = std.rawref(&int)
-      local cond_symbol = std.newsymbol(int, "complete_cond")
-      local cond_label = make_variable_label(block_cx, cond_symbol, int, span)
-      local cond_nid = cx.graph:add_node(cond_label)
-      mappings[cond_label.region_type] = false
-
-      local check = flow.node.Opaque {
-        action = ast.typed.stat.Var {
-          symbols = terralib.newlist({cond_symbol}),
-          types = terralib.newlist({int}),
-          values = terralib.newlist({
-              ast.typed.expr.Cast {
-                fn = ast.typed.expr.Function {
-                  value = int,
-                  expr_type = {std.untyped} -> int,
-                  annotations = ast.default_annotations(),
-                  span = span,
-                },
-                arg = ast.typed.expr.Call {
-                  fn = ast.typed.expr.Function {
-                    value = std.c.legion_index_partition_is_complete,
-                    expr_type = std.c.legion_index_partition_is_complete:gettype(),
-                    annotations = ast.default_annotations(),
-                    span = span,
-                  },
-                  args = terralib.newlist({
-                      ast.typed.expr.RawRuntime {
-                        expr_type = std.c.legion_runtime_t,
-                        annotations = ast.default_annotations(),
-                        span = span,
-                      },
-                      ast.typed.expr.Call {
-                        fn = ast.typed.expr.Function {
-                          value = std.c.legion_index_space_get_parent_index_partition,
-                          expr_type = std.c.legion_index_space_get_parent_index_partition:gettype(),
-                          annotations = ast.default_annotations(),
-                          span = span,
-                        },
-                        args = terralib.newlist({
-                            ast.typed.expr.RawRuntime {
-                              expr_type = std.c.legion_runtime_t,
-                              annotations = ast.default_annotations(),
-                              span = span,
-                            },
-                            ast.typed.expr.FieldAccess {
-                              value = ast.typed.expr.RawValue {
-                                value = ast.typed.expr.IndexAccess {
-                                  value = lhs_label.value,
-                                  index = ast.typed.expr.Constant {
-                                    value = 0,
-                                    expr_type = int32,
-                                    annotations = ast.default_annotations(),
-                                    span = span,
-                                  },
-                                  expr_type = lhs_type:subregion_dynamic(),
-                                  annotations = ast.default_annotations(),
-                                  span = span,
-                                },
-                                expr_type = std.c.legion_logical_region_t,
-                                annotations = ast.default_annotations(),
-                                span = span,
-                              },
-                              field_name = "index_space",
-                              expr_type = std.c.legion_index_space_t,
-                              annotations = ast.default_annotations(),
-                              span = span,
-                            },
-                        }),
-                        conditions = terralib.newlist({}),
-                        expr_type = std.c.legion_index_partition_t,
-                        annotations = ast.default_annotations(),
-                        span = span,
-                      },
-                  }),
-                  conditions = terralib.newlist({}),
-                  expr_type = bool,
-                  annotations = ast.default_annotations(),
-                  span = span,
-                },
-                expr_type = int,
+        local get_barrier_list = flow.node.Opaque {
+          action = ast.typed.stat.Var {
+            symbols = terralib.newlist({barrier_list_symbol}),
+            types = terralib.newlist({barrier_list_type}),
+            values = terralib.newlist({
+              ast.typed.expr.ListFromElement {
+                list = intersection_label.value,
+                value = barrier_label.value,
+                expr_type = barrier_list_type,
                 annotations = ast.default_annotations(),
                 span = span,
               },
-          }),
-          annotations = ast.default_annotations(),
-          span = span,
+            }),
+            annotations = ast.default_annotations(),
+            span = span,
+          }
         }
-      }
-      local check_nid = cx.graph:add_node(check)
-      cx.graph:add_edge(
-        flow.edge.HappensBefore {}, barrier_list_nid,
-        cx.graph:node_sync_port(barrier_list_nid),
-        check_nid, cx.graph:node_sync_port(check_nid))
-      cx.graph:add_edge(
-        flow.edge.HappensBefore {}, check_nid, cx.graph:node_sync_port(check_nid),
-        cond_nid, cx.graph:node_sync_port(cond_nid))
-
-      local index_type = std.rawref(&int)
-      local index_symbol = std.newsymbol(int, "complete_index")
-      local index_label = make_variable_label(
-        block_cx, index_symbol, int, span)
-      local index_nid = block_cx.graph:add_node(index_label)
-
-      local copy_loop = flow.node.ctrl.ForNum {
-        symbol = index_symbol,
-        block = block_cx.graph,
-        annotations = ast.default_annotations(),
-        span = span,
-      }
-      local copy_loop_nid = cx.graph:add_node(copy_loop)
-      cx.graph:add_edge(
-        flow.edge.HappensBefore {}, cond_nid, cx.graph:node_sync_port(cond_nid),
-        copy_loop_nid, cx.graph:node_sync_port(copy_loop_nid))
-
-      local bound1_nid = cx.graph:add_node(
-        flow.node.Constant { value = make_constant(0, int, span) })
-      local bound2_nid = cond_nid
-      cx.graph:add_edge(
-        flow.edge.Read(flow.default_mode()),
-        bound1_nid, cx.graph:node_result_port(bound1_nid),
-        copy_loop_nid, 1)
-      cx.graph:add_edge(
-        flow.edge.Read(flow.default_mode()),
-        bound2_nid, cx.graph:node_result_port(bound2_nid),
-        copy_loop_nid, 2)
-
-      local inner_barrier_list_nid = block_cx.graph:add_node(barrier_list_label)
-
-      local count_type = std.rawref(&uint64)
-      local count_symbol = std.newsymbol(uint64, "adjust_count")
-      local count_label = make_variable_label(block_cx, count_symbol, uint64, span)
-      local count_nid = block_cx.graph:add_node(count_label)
-      mappings[count_label.region_type] = false
-
-      local get_count = flow.node.Opaque {
-        action = ast.typed.stat.Var {
-          symbols = terralib.newlist({count_symbol}),
-          types = terralib.newlist({uint64}),
-          values = terralib.newlist({
-            ast.typed.expr.MethodCall {
-              value = barrier_list_label.value,
-              method_name = "num_leaves",
-              args = terralib.newlist({}),
-              expr_type = uint64,
-              annotations = ast.default_annotations(),
-              span = span,
-            },
-          }),
-          annotations = ast.default_annotations(),
-          span = span,
-        }
-      }
-      local get_count_nid = block_cx.graph:add_node(get_count)
-      block_cx.graph:add_edge(
-        flow.edge.HappensBefore {},
-        get_count_nid, block_cx.graph:node_sync_port(get_count_nid),
-        count_nid, block_cx.graph:node_sync_port(count_nid))
-
-      local inner_barrier_nid = block_cx.graph:add_node(barrier_label)
-      local adjust_nid = issue_barrier_adjust(block_cx, inner_barrier_nid, count_label.value)
-
-      local field_paths = terralib.newlist()
-      for field_path, _ in i2:items() do field_paths:insert(field_path) end
-      local copy = flow.node.Copy {
-        src_field_paths = field_paths,
-        dst_field_paths = field_paths,
-        op = false,
-        annotations = ast.default_annotations(),
-        span = span,
-      }
-      local copy_nid = block_cx.graph:add_node(copy)
-
-      block_cx.graph:add_edge(
-        flow.edge.HappensBefore {}, count_nid, block_cx.graph:node_sync_port(count_nid),
-        adjust_nid, block_cx.graph:node_sync_port(adjust_nid))
-      block_cx.graph:add_edge(
-        flow.edge.HappensBefore {}, adjust_nid, block_cx.graph:node_sync_port(adjust_nid),
-        copy_nid, block_cx.graph:node_sync_port(copy_nid))
-
-      for field_path, old_label in i2:items() do
-        local old_nid = find_matching_input(cx, shard_loop, old_label.region_type, old_label.field_path)
-        local lhs_nid = find_matching_input(cx, shard_loop, lhs_type, old_label.field_path)
-        local intersection_in_nid = cx.graph:add_node(old_label)
-        local intersection_out_nid = cx.graph:add_node(old_label)
-
+        local get_barrier_list_nid = cx.graph:add_node(get_barrier_list)
         cx.graph:add_edge(
-          flow.edge.HappensBefore {}, cond_nid, cx.graph:node_sync_port(cond_nid),
-          intersection_in_nid, cx.graph:node_sync_port(intersection_in_nid))
+          flow.edge.HappensBefore {}, intersection_precondition_nid,
+          cx.graph:node_sync_port(intersection_precondition_nid),
+          get_barrier_list_nid, cx.graph:node_sync_port(get_barrier_list_nid))
         cx.graph:add_edge(
           flow.edge.HappensBefore {},
-          intersection_out_nid, cx.graph:node_sync_port(intersection_out_nid),
-          old_nid, cx.graph:node_sync_port(old_nid))
+          get_barrier_list_nid, cx.graph:node_sync_port(get_barrier_list_nid),
+          barrier_list_nid, cx.graph:node_sync_port(barrier_list_nid))
 
-        local copy_loop_src_port = cx.graph:node_available_port(copy_loop_nid)
-        cx.graph:add_edge(
-          flow.edge.Read(flow.default_mode()), lhs_nid, cx.graph:node_result_port(lhs_nid),
-          copy_loop_nid, copy_loop_src_port)
-        local copy_loop_dst_port = cx.graph:node_available_port(copy_loop_nid)
-        cx.graph:add_edge(
-          flow.edge.Read(flow.default_mode()), intersection_in_nid,
-          cx.graph:node_result_port(intersection_in_nid),
-          copy_loop_nid, copy_loop_dst_port)
-        cx.graph:add_edge(
-          flow.edge.Write(flow.default_mode()), copy_loop_nid, copy_loop_dst_port,
-          intersection_out_nid, cx.graph:node_available_port(intersection_out_nid))
+        local cond_type = std.rawref(&int)
+        local cond_symbol = std.newsymbol(int, "complete_cond")
+        local cond_label = make_variable_label(block_cx, cond_symbol, int, span)
+        local cond_nid = cx.graph:add_node(cond_label)
+        mappings[cond_label.region_type] = false
 
-        local inner_lhs_nid = block_cx.graph:add_node(lhs_label)
-        local inner_intersection_in_nid = block_cx.graph:add_node(old_label)
-        local inner_intersection_out_nid = block_cx.graph:add_node(old_label)
+        local check = flow.node.Opaque {
+          action = ast.typed.stat.Var {
+            symbols = terralib.newlist({cond_symbol}),
+            types = terralib.newlist({int}),
+            values = terralib.newlist({
+                ast.typed.expr.Cast {
+                  fn = ast.typed.expr.Function {
+                    value = int,
+                    expr_type = {std.untyped} -> int,
+                    annotations = ast.default_annotations(),
+                    span = span,
+                  },
+                  arg = ast.typed.expr.Call {
+                    fn = ast.typed.expr.Function {
+                      value = std.c.legion_index_partition_is_complete,
+                      expr_type = std.c.legion_index_partition_is_complete:gettype(),
+                      annotations = ast.default_annotations(),
+                      span = span,
+                    },
+                    args = terralib.newlist({
+                        ast.typed.expr.RawRuntime {
+                          expr_type = std.c.legion_runtime_t,
+                          annotations = ast.default_annotations(),
+                          span = span,
+                        },
+                        ast.typed.expr.Call {
+                          fn = ast.typed.expr.Function {
+                            value = std.c.legion_index_space_get_parent_index_partition,
+                            expr_type = std.c.legion_index_space_get_parent_index_partition:gettype(),
+                            annotations = ast.default_annotations(),
+                            span = span,
+                          },
+                          args = terralib.newlist({
+                              ast.typed.expr.RawRuntime {
+                                expr_type = std.c.legion_runtime_t,
+                                annotations = ast.default_annotations(),
+                                span = span,
+                              },
+                              ast.typed.expr.FieldAccess {
+                                value = ast.typed.expr.RawValue {
+                                  value = ast.typed.expr.IndexAccess {
+                                    value = lhs_label.value,
+                                    index = ast.typed.expr.Constant {
+                                      value = 0,
+                                      expr_type = int32,
+                                      annotations = ast.default_annotations(),
+                                      span = span,
+                                    },
+                                    expr_type = lhs_type:subregion_dynamic(),
+                                    annotations = ast.default_annotations(),
+                                    span = span,
+                                  },
+                                  expr_type = std.c.legion_logical_region_t,
+                                  annotations = ast.default_annotations(),
+                                  span = span,
+                                },
+                                field_name = "index_space",
+                                expr_type = std.c.legion_index_space_t,
+                                annotations = ast.default_annotations(),
+                                span = span,
+                              },
+                          }),
+                          conditions = terralib.newlist({}),
+                          expr_type = std.c.legion_index_partition_t,
+                          annotations = ast.default_annotations(),
+                          span = span,
+                        },
+                    }),
+                    conditions = terralib.newlist({}),
+                    expr_type = bool,
+                    annotations = ast.default_annotations(),
+                    span = span,
+                  },
+                  expr_type = int,
+                  annotations = ast.default_annotations(),
+                  span = span,
+                },
+            }),
+            annotations = ast.default_annotations(),
+            span = span,
+          }
+        }
+        local check_nid = cx.graph:add_node(check)
+        cx.graph:add_edge(
+          flow.edge.HappensBefore {}, barrier_list_nid,
+          cx.graph:node_sync_port(barrier_list_nid),
+          check_nid, cx.graph:node_sync_port(check_nid))
+        cx.graph:add_edge(
+          flow.edge.HappensBefore {}, check_nid, cx.graph:node_sync_port(check_nid),
+          cond_nid, cx.graph:node_sync_port(cond_nid))
 
-        block_cx.graph:add_edge(
-          flow.edge.Read(flow.default_mode()), inner_lhs_nid,
-          block_cx.graph:node_result_port(inner_lhs_nid),
-          copy_nid, 1)
-        block_cx.graph:add_edge(
+        local index_type = std.rawref(&int)
+        local index_symbol = std.newsymbol(int, "complete_index")
+        local index_label = make_variable_label(
+          block_cx, index_symbol, int, span)
+        local index_nid = block_cx.graph:add_node(index_label)
+
+        local copy_loop = flow.node.ctrl.ForNum {
+          symbol = index_symbol,
+          block = block_cx.graph,
+          annotations = ast.default_annotations(),
+          span = span,
+        }
+        local copy_loop_nid = cx.graph:add_node(copy_loop)
+        cx.graph:add_edge(
+          flow.edge.HappensBefore {}, cond_nid, cx.graph:node_sync_port(cond_nid),
+          copy_loop_nid, cx.graph:node_sync_port(copy_loop_nid))
+
+        local bound1_nid = cx.graph:add_node(
+          flow.node.Constant { value = make_constant(0, int, span) })
+        local bound2_nid = cond_nid
+        cx.graph:add_edge(
           flow.edge.Read(flow.default_mode()),
-          inner_intersection_in_nid,
-          block_cx.graph:node_result_port(inner_intersection_in_nid),
-          copy_nid, 2)
+          bound1_nid, cx.graph:node_result_port(bound1_nid),
+          copy_loop_nid, 1)
+        cx.graph:add_edge(
+          flow.edge.Read(flow.default_mode()),
+          bound2_nid, cx.graph:node_result_port(bound2_nid),
+          copy_loop_nid, 2)
+
+        local inner_barrier_list_nid = block_cx.graph:add_node(barrier_list_label)
+
+        local count_type = std.rawref(&uint64)
+        local count_symbol = std.newsymbol(uint64, "adjust_count")
+        local count_label = make_variable_label(block_cx, count_symbol, uint64, span)
+        local count_nid = block_cx.graph:add_node(count_label)
+        mappings[count_label.region_type] = false
+
+        local get_count = flow.node.Opaque {
+          action = ast.typed.stat.Var {
+            symbols = terralib.newlist({count_symbol}),
+            types = terralib.newlist({uint64}),
+            values = terralib.newlist({
+              ast.typed.expr.MethodCall {
+                value = barrier_list_label.value,
+                method_name = "num_leaves",
+                args = terralib.newlist({}),
+                expr_type = uint64,
+                annotations = ast.default_annotations(),
+                span = span,
+              },
+            }),
+            annotations = ast.default_annotations(),
+            span = span,
+          }
+        }
+        local get_count_nid = block_cx.graph:add_node(get_count)
         block_cx.graph:add_edge(
-          flow.edge.Write(flow.default_mode()), copy_nid, 2,
-          inner_intersection_out_nid,
-          block_cx.graph:node_available_port(inner_intersection_out_nid))
+          flow.edge.HappensBefore {},
+          get_count_nid, block_cx.graph:node_sync_port(get_count_nid),
+          count_nid, block_cx.graph:node_sync_port(count_nid))
+
+        local inner_barrier_nid = block_cx.graph:add_node(barrier_label)
+        local adjust_nid = issue_barrier_adjust(block_cx, inner_barrier_nid, count_label.value)
+
+        local field_paths = terralib.newlist()
+        for field_path, _ in i2:items() do field_paths:insert(field_path) end
+        local copy = flow.node.Copy {
+          src_field_paths = field_paths,
+          dst_field_paths = field_paths,
+          op = false,
+          annotations = ast.default_annotations(),
+          span = span,
+        }
+        local copy_nid = block_cx.graph:add_node(copy)
+
+        block_cx.graph:add_edge(
+          flow.edge.HappensBefore {}, count_nid, block_cx.graph:node_sync_port(count_nid),
+          adjust_nid, block_cx.graph:node_sync_port(adjust_nid))
+        block_cx.graph:add_edge(
+          flow.edge.HappensBefore {}, adjust_nid, block_cx.graph:node_sync_port(adjust_nid),
+          copy_nid, block_cx.graph:node_sync_port(copy_nid))
+
+        for field_path, old_label in i2:items() do
+          local old_nid = find_matching_input(cx, shard_loop, old_label.region_type, old_label.field_path)
+          local lhs_nid = find_matching_input(cx, shard_loop, lhs_type, old_label.field_path)
+          local intersection_in_nid = cx.graph:add_node(old_label)
+          local intersection_out_nid = cx.graph:add_node(old_label)
+
+          cx.graph:add_edge(
+            flow.edge.HappensBefore {}, cond_nid, cx.graph:node_sync_port(cond_nid),
+            intersection_in_nid, cx.graph:node_sync_port(intersection_in_nid))
+          cx.graph:add_edge(
+            flow.edge.HappensBefore {},
+            intersection_out_nid, cx.graph:node_sync_port(intersection_out_nid),
+            old_nid, cx.graph:node_sync_port(old_nid))
+
+          local copy_loop_src_port = cx.graph:node_available_port(copy_loop_nid)
+          cx.graph:add_edge(
+            flow.edge.Read(flow.default_mode()), lhs_nid, cx.graph:node_result_port(lhs_nid),
+            copy_loop_nid, copy_loop_src_port)
+          local copy_loop_dst_port = cx.graph:node_available_port(copy_loop_nid)
+          cx.graph:add_edge(
+            flow.edge.Read(flow.default_mode()), intersection_in_nid,
+            cx.graph:node_result_port(intersection_in_nid),
+            copy_loop_nid, copy_loop_dst_port)
+          cx.graph:add_edge(
+            flow.edge.Write(flow.default_mode()), copy_loop_nid, copy_loop_dst_port,
+            intersection_out_nid, cx.graph:node_available_port(intersection_out_nid))
+
+          local inner_lhs_nid = block_cx.graph:add_node(lhs_label)
+          local inner_intersection_in_nid = block_cx.graph:add_node(old_label)
+          local inner_intersection_out_nid = block_cx.graph:add_node(old_label)
+
+          block_cx.graph:add_edge(
+            flow.edge.Read(flow.default_mode()), inner_lhs_nid,
+            block_cx.graph:node_result_port(inner_lhs_nid),
+            copy_nid, 1)
+          block_cx.graph:add_edge(
+            flow.edge.Read(flow.default_mode()),
+            inner_intersection_in_nid,
+            block_cx.graph:node_result_port(inner_intersection_in_nid),
+            copy_nid, 2)
+          block_cx.graph:add_edge(
+            flow.edge.Write(flow.default_mode()), copy_nid, 2,
+            inner_intersection_out_nid,
+            block_cx.graph:node_available_port(inner_intersection_out_nid))
+        end
+
+        block_cx.graph:add_edge(
+          flow.edge.Arrive {},
+          copy_nid, block_cx.graph:node_available_port(copy_nid),
+          inner_barrier_list_nid, block_cx.graph:node_available_port(inner_barrier_list_nid))
+
+        preconditions[copy_loop] = true
       end
-
-      block_cx.graph:add_edge(
-        flow.edge.Arrive {},
-        copy_nid, block_cx.graph:node_available_port(copy_nid),
-        inner_barrier_list_nid, block_cx.graph:node_available_port(inner_barrier_list_nid))
-
-      preconditions[copy_loop] = true
     end
   end
 
@@ -3906,7 +3914,12 @@ local function synchronize_shard_start(cx, shard_loop, barrier_label, preconditi
   return barrier_label
 end
 
-local function select_copy_elision(cx, lists, inverse_mapping)
+local function select_copy_elision(cx, lists, mapping)
+  local inverse_mapping = {}
+  for k, v in pairs(mapping) do
+    inverse_mapping[v] = k
+  end
+
   -- In general, partitions must be duplicated to avoid conflicts. But
   -- disjoint partitions (at most one, if there are multiple such
   -- aliased partitions) need not be duplicated---and in avoiding the
@@ -4094,18 +4107,18 @@ local function rewrite_elided_lists(cx, lists, intersections, barriers,
   return elided_lists, elided_intersections, elided_barriers, elided_mapping
 end
 
-local function rewrite_list_elision(cx, lists, intersections, barriers, mapping)
-  -- Compute copy elision and rewrite the elided lists.
+local function rewrite_list_elision(cx, lists, intersections, barriers, mapping,
+                                    elide_copy, shadow_partitions)
+  -- Rewrite the elided lists.
   local inverse_mapping = {}
   for k, v in pairs(mapping) do
     inverse_mapping[v] = k
   end
 
-  local elide_copy, shadowed_partitions = select_copy_elision(cx, lists, inverse_mapping)
   local elided_lists, elided_intersections, elided_barriers, elided_mapping =
     rewrite_elided_lists(cx, lists, intersections, barriers,
                          inverse_mapping, elide_copy)
-  return elided_lists, elided_intersections, elided_barriers, elide_copy, shadowed_partitions, elided_mapping
+  return elided_lists, elided_intersections, elided_barriers, elided_mapping
 end
 
 local function get_slice_type_and_symbol(cx, region_type, list_type, label)
@@ -6173,13 +6186,15 @@ local function spmdize(cx, loop)
   local shard_cx = cx:new_graph_scope(shard_graph)
   normalize_communication(shard_cx)
   local lists, original_partitions, mapping = rewrite_shard_partitions(shard_cx)
+  -- Compute copy elision early to avoid copy-ins inside the shard
+  local elide_copy, shadowed_partitions = select_copy_elision(shard_cx, lists, mapping)
   local original_intersections, barriers = rewrite_communication(shard_cx, shard_loop, mapping)
   local collectives, local_collectives = rewrite_scalar_communication(shard_cx)
   local scratch_field_mapping = rewrite_reduction_scratch_fields(shard_cx, shard_loop)
   local intersections, intersection_mapping, intersection_preconditions = rewrite_shard_intersections(
     shard_cx, shard_loop, original_intersections)
   local copyin_preconditions, copyin_mapping, start_barrier = rewrite_initial_copyin(
-    shard_cx, shard_loop, original_intersections, intersection_preconditions)
+    shard_cx, shard_loop, original_intersections, intersection_preconditions, elide_copy, mapping)
 
   -- `shard_vars` contains labels for variables specific to a shard
   -- (e.g. the range of global indices it is responsible for).
@@ -6212,8 +6227,8 @@ local function spmdize(cx, loop)
 
   local shard_task = flow_outline_task.entry(
     outer_shard_cx.graph, outer_shard_block, "shard", true)
-  local elided_lists, elided_intersections, elided_barriers, elide_copy, shadowed_partitions, elided_mapping =
-    rewrite_list_elision(outer_shard_cx, lists, intersections, barriers, mapping)
+  local elided_lists, elided_intersections, elided_barriers, elided_mapping =
+    rewrite_list_elision(outer_shard_cx, lists, intersections, barriers, mapping, elide_copy, shadowed_partitions)
   local shard_index, shard_stride, slice_mapping,
       new_intersections, new_barriers = rewrite_shard_slices(
       outer_shard_cx, shard_vars, global_vars, elided_lists, elided_intersections,
