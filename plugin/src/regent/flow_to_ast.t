@@ -1029,7 +1029,8 @@ function flow_to_ast.node_data(cx, nid)
   -- control node of some sort. To work around such cases, we need to
   -- save the scalar in a variable.
   local function needs_save(nid)
-    return cx.graph:node_label(nid):is(flow.node.ctrl.MustEpoch)
+    return cx.graph:node_label(nid):is(flow.node.ctrl.MustEpoch) or
+      cx.graph:node_label(nid):is(flow.node.ctrl.Block)
   end
 
   local label = cx.graph:node_label(nid)

@@ -4592,14 +4592,81 @@ local function make_distribution_loop(cx, block, shard_index, shard_stride,
 end
 
 local function make_must_epoch(cx, block, annotations, span)
-  local label = flow.node.ctrl.MustEpoch {
+  -- Wrap block in a must epoch and return it.
+
+  -- This gets a bit tricky, because the must epoch will use
+  -- simultaneous coherence, and there might in general be other tasks
+  -- at the same scope also using simultaneous coherence which would
+  -- result in undesired reordering or concurrency. To avoid this,
+  -- issue a fence immediately before and immediately after the must
+  -- epoch. This essentially forces the must epoch to execute alone.
+
+  -- It would be cleaner in some ways to wrap this in an inner task
+  -- with exclusive coherence on all region parameters, though I'm
+  -- worried that would have a substantially higher risk of
+  -- introducing performance bugs because it would force the runtime
+  -- to build virtual instances for all regions.
+
+  local outer_cx = cx:new_graph_scope(flow.empty_graph(cx.tree))
+  local inner_label = flow.node.ctrl.MustEpoch {
     block = block,
     annotations = annotations { spmd = ast.annotation.Forbid { value = false } },
     span = span,
   }
-  local nid = cx.graph:add_node(label)
-  flow_summarize_subgraph.entry(cx.graph, nid, {})
-  return nid
+  local inner_nid = outer_cx.graph:add_node(inner_label)
+  flow_summarize_subgraph.entry(outer_cx.graph, inner_nid, {})
+
+  local fence_label = flow.node.Opaque {
+    action = ast.typed.stat.Expr {
+      expr = ast.typed.expr.Call {
+        fn = ast.typed.expr.Function {
+          value = std.c.legion_runtime_issue_execution_fence,
+          expr_type = std.c.legion_runtime_issue_execution_fence:gettype(),
+          annotations = ast.default_annotations(),
+          span = span,
+        },
+        args = terralib.newlist({
+          ast.typed.expr.RawRuntime {
+            expr_type = std.c.legion_runtime_t,
+            annotations = ast.default_annotations(),
+            span = span,
+          },
+          ast.typed.expr.RawContext {
+            expr_type = std.c.legion_context_t,
+            annotations = ast.default_annotations(),
+            span = span,
+          },
+        }),
+        conditions = terralib.newlist({}),
+        expr_type = terralib.types.unit,
+        annotations = ast.default_annotations(),
+        span = span,
+      },
+      annotations = ast.default_annotations(),
+      span = span,
+    }
+  }
+  local before_nid = outer_cx.graph:add_node(fence_label)
+  local after_nid = outer_cx.graph:add_node(fence_label)
+
+  outer_cx.graph:add_edge(
+    flow.edge.HappensBefore {},
+    before_nid, outer_cx.graph:node_sync_port(before_nid),
+    inner_nid, outer_cx.graph:node_sync_port(inner_nid))
+  outer_cx.graph:add_edge(
+    flow.edge.HappensBefore {},
+    inner_nid, outer_cx.graph:node_sync_port(inner_nid),
+    after_nid, outer_cx.graph:node_sync_port(after_nid))
+
+  local outer_label = flow.node.ctrl.Block {
+    block = outer_cx.graph,
+    annotations = ast.default_annotations(),
+    span = span,
+  }
+
+  local outer_nid = cx.graph:add_node(outer_label)
+  flow_summarize_subgraph.entry(cx.graph, outer_nid, {})
+  return outer_nid
 end
 
 local function find_match_incoming(cx, predicate, nid)
