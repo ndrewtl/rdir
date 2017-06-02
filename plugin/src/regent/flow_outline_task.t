@@ -52,7 +52,18 @@ local validate = require("regent/validate")
 local vectorize_loops = require("regent/vectorize_loops")
 
 local context = {}
-context.__index = context
+
+function context:__index (field)
+  local value = context [field]
+  if value ~= nil then
+    return value
+  end
+  error ("context has no field '" .. field .. "' (in lookup)", 2)
+end
+
+function context:__newindex (field, value)
+  error ("context has no field '" .. field .. "' (in assignment)", 2)
+end
 
 function context:new_graph_scope(graph)
   assert(flow.is_graph(graph))
