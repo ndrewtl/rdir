@@ -526,7 +526,7 @@ function flow_to_ast.node_task(cx, nid)
 
   local nparams
   if std.is_task(fn.value) then
-    nparams = #fn.value:gettype().parameters
+    nparams = #fn.value:get_type().parameters
     assert(maxport >= nparams + 1)
   else
     nparams = maxport - 1

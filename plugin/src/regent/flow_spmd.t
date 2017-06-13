@@ -2204,7 +2204,7 @@ local function issue_barrier_await_blocking(cx, bar_nid, use_nid, after_nid, inn
   local task_label = flow.node.Function {
     value = ast.typed.expr.Function {
       value = empty_task,
-      expr_type = empty_task:gettype(),
+      expr_type = empty_task:get_type(),
       annotations = ast.default_annotations(),
       span = use_label.span,
     }

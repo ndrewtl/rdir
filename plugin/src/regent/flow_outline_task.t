@@ -394,19 +394,22 @@ local function extract_task(cx, nid, prefix, force_read_write)
   local name = tostring(std.newsymbol())
   if prefix then name = prefix .. "_" .. name end
   name = data.newtuple(name)
-  local prototype = std.newtask(name)
+  local task = std.new_task(name)
+  local variant = task:make_variant("primary")
+  task:set_primary_variant(variant)
+
   local task_type = terralib.types.functype(
     params:map(function(param) return param.param_type end), return_type, false)
-  prototype:settype(task_type)
-  prototype:set_param_symbols(
+  task:set_type(task_type)
+  task:set_param_symbols(
     params:map(function(param) return param.symbol end))
-  prototype:setprivileges(privileges)
-  prototype:set_coherence_modes(coherence_modes)
-  prototype:set_flags(flags)
-  prototype:set_conditions(conditions)
-  prototype:set_param_constraints(constraints)
-  prototype:set_constraints(cx.tree.constraints)
-  prototype:set_region_universe(cx.tree.region_universe)
+  task:set_privileges(privileges)
+  task:set_coherence_modes(coherence_modes)
+  task:set_flags(flags)
+  task:set_conditions(conditions)
+  task:set_param_constraints(constraints)
+  task:set_constraints(cx.tree.constraints)
+  task:set_region_universe(cx.tree.region_universe)
 
   local ast = ast.typed.top.Task {
     name = name,
@@ -424,7 +427,7 @@ local function extract_task(cx, nid, prefix, force_read_write)
       idempotent = false,
     },
     region_divergence = false,
-    prototype = prototype,
+    prototype = task,
     annotations = ast.default_annotations(),
     span = label.span,
   }
@@ -465,7 +468,7 @@ local function add_task_arg(cx, call_nid, task)
   local label = flow.node.Function {
     value = ast.typed.expr.Function {
       value = task,
-      expr_type = task:gettype(),
+      expr_type = task:get_type(),
       annotations = ast.default_annotations(),
       span = call_label.span,
     }
@@ -602,8 +605,8 @@ local function add_result(cx, original_nid, call_nid, return_type)
 end
 
 local function issue_call(cx, nid, task, param_mapping, return_type)
-  if task:gettype().returntype ~= terralib.types.unit then print("FIXME: Not copying back scalar result") end
-  local call_nid = add_call_node(cx, nid, terralib.types.unit)--task:gettype().returntype)
+  if task:get_type().returntype ~= terralib.types.unit then print("FIXME: Not copying back scalar result") end
+  local call_nid = add_call_node(cx, nid, terralib.types.unit)--task:get_type().returntype)
   add_task_arg(cx, call_nid, task)
   copy_args(cx, nid, call_nid, param_mapping)
   -- add_result(cx, nid, call_nid, return_type)

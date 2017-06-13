@@ -1298,7 +1298,7 @@ end
 local function get_privilege_field_map(task, region_type)
   local privileges, privilege_field_paths =
     std.find_task_privileges(
-      region_type, task:getprivileges(),
+      region_type, task:get_privileges(),
       task:get_coherence_modes(), task:get_flags())
   local result = new_field_map()
   for i, privilege in ipairs(privileges) do
