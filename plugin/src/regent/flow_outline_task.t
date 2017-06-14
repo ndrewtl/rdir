@@ -140,6 +140,7 @@ local function gather_params(cx, nid)
           ast.typed.top.TaskParam {
             symbol = label.value.value,
             param_type = std.as_read(label.value.expr_type),
+            future = false,
             annotations = label.value.annotations,
             span = label.value.span,
         })

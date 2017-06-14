@@ -3435,6 +3435,8 @@ function flow_from_ast.stat(cx, node)
 end
 
 function flow_from_ast.top_task(cx, node)
+  if not node.body then return node end
+
   local task = node.prototype
   local cx = cx:new_task_scope(task:get_constraints(),
                                task:get_region_universe())

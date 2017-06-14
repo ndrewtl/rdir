@@ -1220,7 +1220,7 @@ function flow_to_ast.graph(cx, graph)
 end
 
 function flow_to_ast.top_task(cx, node)
-  return node { body = flow_to_ast.graph(cx, node.body) }
+  return node { body = node.body and flow_to_ast.graph(cx, node.body) }
 end
 
 function flow_to_ast.top(cx, node)

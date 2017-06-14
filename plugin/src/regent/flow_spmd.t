@@ -6367,6 +6367,8 @@ function flow_spmd.graph(cx, graph)
 end
 
 function flow_spmd.top_task(cx, node)
+  if not node.body then return node end
+
   local body = node.body:deepcopy()
   body:map_nodes_recursive(
     function(graph, nid, label)
