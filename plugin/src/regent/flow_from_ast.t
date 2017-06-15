@@ -1792,9 +1792,6 @@ function analyze_privileges.expr(cx, node, privilege_map)
   elseif node:is(ast.typed.expr.Isnull) then
     return analyze_privileges.expr_isnull(cx, node, privilege_map)
 
-  elseif node:is(ast.typed.expr.New) then
-    return new_field_map()
-
   elseif node:is(ast.typed.expr.Null) then
     return new_field_map()
 
@@ -2645,15 +2642,6 @@ function flow_from_ast.expr_isnull(cx, node, privilege_map, init_only)
     privilege_map)
 end
 
-function flow_from_ast.expr_new(cx, node, privilege_map, init_only)
-  local region = flow_from_ast.expr(cx, node.region, none)
-  return as_opaque_expr(
-    cx,
-    function(v1) return node { region = v1 } end,
-    terralib.newlist({region}),
-    privilege_map)
-end
-
 function flow_from_ast.expr_null(cx, node, privilege_map, init_only)
   return as_opaque_expr(
     cx,
@@ -3053,9 +3041,6 @@ function flow_from_ast.expr(cx, node, privilege_map, init_only)
 
   elseif node:is(ast.typed.expr.Isnull) then
     return flow_from_ast.expr_isnull(cx, node, privilege_map, init_only)
-
-  elseif node:is(ast.typed.expr.New) then
-    return flow_from_ast.expr_new(cx, node, privilege_map, init_only)
 
   elseif node:is(ast.typed.expr.Null) then
     return flow_from_ast.expr_null(cx, node, privilege_map, init_only)
