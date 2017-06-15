@@ -426,7 +426,6 @@ local function extract_task(cx, nid, prefix, force_read_write)
       leaf = false,
       inner = false,
       idempotent = false,
-      alloc = true,
     },
     region_divergence = false,
     prototype = task,

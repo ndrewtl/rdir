@@ -2098,7 +2098,6 @@ do
         leaf = false,
         inner = false,
         idempotent = false,
-        alloc = true,
       },
       region_divergence = false,
       prototype = prototype,
