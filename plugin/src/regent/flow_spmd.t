@@ -424,13 +424,17 @@ local function find_close_results(cx, close_nid)
   return result_nids
 end
 
+local function is_exact_match(label, region_type, field_path)
+  return label:is(flow.node.data) and
+    label.region_type == region_type and
+    (not field_path or label.field_path == field_path)
+end
+
 local function find_matching_input(cx, op_nid, region_type, field_path)
   return maybe(cx.graph:filter_immediate_predecessors_by_edges(
     function(edge, label)
       if edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write) then
-        return label:is(flow.node.data) and
-          label.region_type == region_type and
-          (not field_path or label.field_path == field_path)
+        return is_exact_match(label, region_type, field_path)
       end
     end,
     op_nid))
@@ -440,9 +444,7 @@ local function find_matching_inputs(cx, op_nid, region_type, field_path)
   return cx.graph:filter_immediate_predecessors_by_edges(
     function(edge, label)
       if edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write) then
-        return label:is(flow.node.data) and
-          label.region_type == region_type and
-          (not field_path or label.field_path == field_path)
+        return is_exact_match(label, region_type, field_path)
       end
     end,
     op_nid)
@@ -452,9 +454,7 @@ local function find_matching_output(cx, op_nid, region_type, field_path)
   return maybe(cx.graph:filter_immediate_successors_by_edges(
     function(edge, label)
       if edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write) then
-        return label:is(flow.node.data) and
-          label.region_type == region_type and
-          (not field_path or label.field_path == field_path)
+        return is_exact_match(label, region_type, field_path)
       end
     end,
     op_nid))
@@ -463,9 +463,7 @@ end
 local function find_match_backwards(cx, op_nid, region_type, field_path)
   return maybe(cx.graph:filter_nodes(
     function(nid, label)
-      return label:is(flow.node.data) and
-        label.region_type == region_type and
-        (not field_path or label.field_path == field_path) and
+      return is_exact_match(label, region_type, field_path) and
         cx.graph:reachable(
           nid, op_nid,
           function(edge)
@@ -1589,9 +1587,7 @@ local function issue_with_scratch_fields(cx, op, reduction_nids, other_nids,
             function(edge2)
               local label = cx.graph:node_label(edge2.to_node)
               return edge2.label:is(flow.edge.Write) and
-                label:is(flow.node.data) and
-                label.region_type == old_type and
-                label.field_path == field_path and
+                is_exact_match(label, old_type, field_path) and
                 edge2.from_port == edge.to_port
             end,
             edge.to_node) == 0
@@ -2756,9 +2752,7 @@ local function rewrite_scalar_communication_subgraph(cx, loop_nid)
     -- 0. Identify the local contribution.
     local block_target_nids = block_cx.graph:filter_nodes(
       function(nid, label)
-        return label:is(flow.node.data.Scalar) and
-          label.region_type == target_label.region_type and
-          label.field_path == target_label.field_path
+        return is_exact_match(label, target_label.region_type, target_label.field_path)
         end)
     assert(#block_target_nids == 1) -- For now there must be exactly one.
     local block_target_nid = block_target_nids[1]
@@ -4900,11 +4894,8 @@ local function find_root_region(cx, nid)
 
     local reads = cx.graph:filter_immediate_predecessors_by_edges(
       function(edge, from_label)
-        return from_label:is(flow.node.data) and
-          cx.tree:lowest_common_ancestor(
-            from_label.region_type, label.region_type) ==
-          from_label.region_type and
-          from_label.field_path == label.field_path and
+        local ancestor = cx.tree:lowest_common_ancestor(from_label.region_type, label.region_type)
+        return is_exact_match(from_label, ancestor, from_label.field_path) and
           edge.label:is(flow.edge.Read)
       end,
       writer)
