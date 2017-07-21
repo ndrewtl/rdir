@@ -270,6 +270,16 @@ function region_tree:ancestors(region_type)
     function() return true end)
 end
 
+-- Is region_type a subregion of other_region_type?
+function region_tree:is_subregion(region_type, other_region_type)
+  if not std.type_maybe_eq(region_type:fspace(), other_region_type:fspace()) then
+    return false
+  end
+
+  return std.check_constraint(
+    self, std.constraint(region_type, other_region_type, std.subregion))
+end
+
 function region_tree:lowest_common_ancestor(region_type, other_region_type)
   assert(flow_region_tree.is_region(region_type))
   assert(flow_region_tree.is_region(other_region_type))

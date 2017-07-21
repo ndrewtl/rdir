@@ -400,6 +400,57 @@ local function maybe(list)
   return list[1]
 end
 
+local function first(list)
+  assert(#list >= 1)
+  return list[1]
+end
+
+local function find_open_results(cx, open_nid)
+  local result_nids = terralib.newlist()
+  cx.graph:traverse_immediate_successors(
+    function(nid, label)
+      if label:is(flow.node.data) then
+        -- Include external nodes only, i.e. ones read or writen by
+        -- something other than an open or close node.
+        local is_external = false
+        cx.graph:traverse_incoming_edges(
+          function(from_node, _, edge)
+            local label = cx.graph:node_label(from_node)
+            if not (label:is(flow.node.Open) or label:is(flow.node.Close)) and
+              not edge.label:is(flow.edge.HappensBefore)
+            then
+              is_external = true
+            end
+          end,
+          nid)
+        cx.graph:traverse_outgoing_edges(
+          function(_, to_node, edge)
+            local label = cx.graph:node_label(to_node)
+            if not (label:is(flow.node.Open) or label:is(flow.node.Close)) and
+              not edge.label:is(flow.edge.HappensBefore)
+            then
+              is_external = true
+            end
+          end,
+          nid)
+        if is_external then
+          result_nids:insert(nid)
+        end
+
+        -- Recurse connected subgraph of open nodes.
+        cx.graph:traverse_immediate_successors(
+          function(nid, label)
+            if label:is(flow.node.Open) then
+              result_nids:insertall(find_open_results(cx, nid))
+            end
+          end,
+          nid)
+      end
+    end,
+    open_nid)
+  return result_nids
+end
+
 local function find_close_results(cx, close_nid)
   local result_nids = terralib.newlist()
   cx.graph:traverse_immediate_successors(
@@ -408,13 +459,7 @@ local function find_close_results(cx, close_nid)
         cx.graph:traverse_immediate_successors(
           function(nid, label)
             if label:is(flow.node.Open) then
-              cx.graph:traverse_immediate_successors(
-                function(nid, label)
-                  if label:is(flow.node.data) then
-                    result_nids:insert(nid)
-                  end
-                end,
-                nid)
+              result_nids:insertall(find_open_results(cx, nid))
             end
           end,
           nid)
@@ -648,10 +693,37 @@ local function normalize_communication_subgraph(cx, shard_loop)
         --  1. If the region doesn't exist *at all*, just create it.
         --  2. If the region does exist, hook up to the appropriate node.
 
-        local parent_nid = find_matching_input(
-          block_cx, close_nid,
-          block_cx.tree:parent(result_label.region_type), result_label.field_path)
-        assert(parent_nid)
+        -- Find the immediate ancestor.
+        local ancestor_nids = block_cx.graph:filter_immediate_predecessors_by_edges(
+          function(edge, label)
+            return not edge.label:is(flow.edge.HappensBefore) and
+              block_cx.tree:is_subregion(result_label.region_type, label.region_type) and
+              result_label.field_path == label.field_path
+          end,
+          close_nid)
+
+        -- Keep the lowest among the immediate ancestors.
+        local ancestor_nid
+        do
+          local lowest_nid
+          for _, nid in ipairs(ancestor_nids) do
+            if lowest_nid == nil then
+              lowest_nid = nid
+            elseif block_cx.tree:is_subregion(
+              block_cx.graph:node_label(nid).region_type,
+              block_cx.graph:node_label(lowest_nid).region_type)
+            then
+              lowest_nid = nid
+            elseif not block_cx.tree:is_subregion(
+              block_cx.graph:node_label(lowest_nid).region_type,
+              block_cx.graph:node_label(nid).region_type)
+            then
+              assert(false, "incomparable regions")
+            end
+          end
+          ancestor_nid = lowest_nid
+        end
+        assert(ancestor_nid)
 
         local any_input_nid = find_match_backwards(
           block_cx, close_nid, result_label.region_type, result_label.field_path)
@@ -659,21 +731,29 @@ local function normalize_communication_subgraph(cx, shard_loop)
           -- 1. Region doesn't exist; just create it.
           input_nid = block_cx.graph:add_node(result_label)
           block_cx.graph:copy_outgoing_edges(
-            function(edge) return edge.to_node == close_nid end, parent_nid, input_nid)
-          detach_nids:insert(parent_nid)
+            function(edge) return edge.to_node == close_nid end, ancestor_nid, input_nid)
+          detach_nids:insert(ancestor_nid)
         else
           -- 2. Region exists, somewhere back in the graph.
 
           -- This gets hard. For now, just pattern match cases we know
           -- how to handle and assert if we hit a more general case.
 
-          -- Try to find the region among the parent's sources, if any.
-          local parent_close_nid = find_predecessor_maybe(block_cx, parent_nid)
-          if parent_close_nid then
-            assert(block_cx.graph:node_label(parent_close_nid):is(flow.node.Close))
-            input_nid = find_matching_input(
-              block_cx, parent_close_nid,
-              result_label.region_type, result_label.field_path)
+          -- Try to find the region among the ancestor's sources, if any.
+          local ancestor_close_nid = find_predecessor_maybe(block_cx, ancestor_nid)
+          if ancestor_close_nid then
+            assert(block_cx.graph:node_label(ancestor_close_nid):is(flow.node.Close))
+
+            local input_nid = first(block_cx.graph:filter_inverse_toposort(
+              ancestor_close_nid,
+              function(_, label)
+                return is_exact_match(
+                  label, result_label.region_type, result_label.field_path)
+              end,
+              function(edge, _)
+                return edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write)
+              end))
+
             assert(input_nid)
             block_cx.graph:add_edge(
               flow.edge.Read(flow.default_mode()), input_nid, block_cx.graph:node_result_port(input_nid),
