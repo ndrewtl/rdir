@@ -2361,11 +2361,17 @@ local function issue_intersection_copy_synchronization_forwards(
     empty_in, empty_out, full_in, full_out = unpack(bars)
   else
     local bar_type = std.list(std.list(std.phase_barrier))
+    -- Incoming barriers work differently when used with copy-copy
+    -- synchronization. The depth parameter ensures that codegen
+    -- issues the synchronization properly.
+    local in_bar_type = std.list(
+      std.list(std.phase_barrier, nil, nil, nil, nil, 1),
+      nil, nil, nil, nil, 1)
 
     local empty_in_symbol = std.newsymbol(
-      bar_type, "empty_in_" .. tostring(dst_label.value.value) .. "_" .. tostring(field_path))
+      in_bar_type, "empty_in_" .. tostring(dst_label.value.value) .. "_" .. tostring(field_path))
     empty_in = make_variable_label(
-      cx, empty_in_symbol, bar_type, dst_label.value.span)
+      cx, empty_in_symbol, in_bar_type, dst_label.value.span)
 
     local empty_out_symbol = std.newsymbol(
       bar_type, "empty_out_" .. tostring(dst_label.value.value) .. "_" .. tostring(field_path))
@@ -2373,9 +2379,9 @@ local function issue_intersection_copy_synchronization_forwards(
       cx, empty_out_symbol, bar_type, dst_label.value.span)
 
     local full_in_symbol = std.newsymbol(
-      bar_type, "full_in_" .. tostring(dst_label.value.value) .. "_" .. tostring(field_path))
+      in_bar_type, "full_in_" .. tostring(dst_label.value.value) .. "_" .. tostring(field_path))
     full_in = make_variable_label(
-      cx, full_in_symbol, bar_type, dst_label.value.span)
+      cx, full_in_symbol, in_bar_type, dst_label.value.span)
 
     local full_out_symbol = std.newsymbol(
       bar_type, "full_out_" .. tostring(dst_label.value.value) .. "_" .. tostring(field_path))
