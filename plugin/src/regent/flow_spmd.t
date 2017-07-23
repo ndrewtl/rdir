@@ -3238,6 +3238,18 @@ local function rewrite_shard_intersections(cx, shard_loop, intersections)
   return shallow_intersections, mapping, preconditions
 end
 
+-- If possible, we would prefer to initialize non-elided partitions inside of
+-- shards instead of outside shards. However, this is only possible when the
+-- elided partition dominates the non-elided one. Below we use a completeness
+-- check on the elided partition for this purpose. But this check is only
+-- valid when two types share the same parent, otherwise completeness is
+-- irrelevant.
+--
+-- This function exists to make sure we only run complete when it makes sense.
+local function permit_dominance_via_complete(cx, lhs_type, rhs_type)
+  return std.type_eq(cx.tree:parent(lhs_type), cx.tree:parent(rhs_type))
+end
+
 local function rewrite_initial_copyin(cx, shard_loop, intersections, intersection_preconditions,
                                       elide_copy, elide_mapping)
   local inverse_mapping = {}
@@ -3252,7 +3264,11 @@ local function rewrite_initial_copyin(cx, shard_loop, intersections, intersectio
 
   for lhs_type, i1 in intersections:items() do
     for rhs_type, i2 in i1:items() do
-      if inverse_mapping[rhs_type] and not elide_copy[inverse_mapping[rhs_type]] then
+      if inverse_mapping[lhs_type] and inverse_mapping[rhs_type] and
+        not elide_copy[inverse_mapping[rhs_type]] and
+        permit_dominance_via_complete(
+          cx, inverse_mapping[lhs_type], inverse_mapping[rhs_type])
+      then
         local lhs_label = cx.graph:node_label(find_matching_input(cx, shard_loop, lhs_type))
 
         local intersection_label
@@ -5259,16 +5275,22 @@ end
 local function issue_zipped_copy(cx, src_nids, dst_in_nids, dst_out_nids,
                                  src_type, dst_type, nparts_nid,
                                  part_indices_nid, shadow, span)
-  if not shadow then
-    return issue_zipped_copy_interior(
-      cx, src_nids, dst_in_nids, dst_out_nids,
-      src_type, dst_type, nparts_nid, part_indices_nid, span)
-  else
-    local shadow_label
+  local shadow_label
+  if shadow then
     for field_path, label in shadow:items() do
       shadow_label = label
     end
     assert(shadow_label and std.is_partition(shadow_label.region_type))
+  end
+
+  local part_type = std.is_partition(src_type) and src_type or dst_type
+  if not shadow or
+    not permit_dominance_via_complete(cx, part_type, shadow_label.region_type)
+  then
+    return issue_zipped_copy_interior(
+      cx, src_nids, dst_in_nids, dst_out_nids,
+      src_type, dst_type, nparts_nid, part_indices_nid, span)
+  else
 
     -- Build the outer conditional.
     local block_cx = cx:new_graph_scope(flow.empty_graph(cx.tree))
