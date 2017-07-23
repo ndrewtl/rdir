@@ -6207,15 +6207,15 @@ local function rewrite_inputs(cx, old_loop, new_loop,
       local shadow = shadowed_partitions[region_type.partition_type]
       local shadow_label = shadow and partitions[mapping[shadow]]
       if shadow then
-        local has_intersecion = false
+        local has_intersection = false
         for _, pair in intersection_types:items() do
           local _, rhs_type = unpack(pair)
           if std.type_eq(rhs_type, region_type) then
-            has_intersecion = true
+            has_intersection = true
             break
           end
         end
-        shadow = has_intersecion and shadow
+        shadow = has_intersection and shadow
         shadow_label = shadow and shadow_label
       end
       issue_input_copies(
