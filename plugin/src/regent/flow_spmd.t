@@ -139,7 +139,11 @@ local function whitelist_node_types(cx, loop_nid)
     function(graph, nid, label)
       return not whitelist(label) and {graph, nid} or nil
     end)
-  return result == nil, unpack(result)
+  if result == nil then
+    return false
+  else
+    return true, unpack(result)
+  end
 end
 
 local function has_leaves(cx, loop_nid)
