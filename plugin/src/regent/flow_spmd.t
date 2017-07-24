@@ -140,9 +140,9 @@ local function whitelist_node_types(cx, loop_nid)
       return not whitelist(label) and {graph, nid} or nil
     end)
   if result == nil then
-    return false
+    return true
   else
-    return true, unpack(result)
+    return false, unpack(result)
   end
 end
 
