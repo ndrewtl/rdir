@@ -371,6 +371,8 @@ local function loops_are_compatible(cx, loop_nid)
   return true
 end
 
+local function ignore(...) end
+
 local function can_spmdize(cx, loop)
   -- Conditions:
   --
@@ -384,11 +386,48 @@ local function can_spmdize(cx, loop)
   --      c. Data nodes (regions, partitions, scalars) of any kinds
   --      d. Any variables updated must be updated uniformly (not checked yet)
 
-  return has_demand_spmd(cx, loop) and
-    whitelist_node_types(cx, loop) and
-    has_leaves(cx, loop) and
-    leaves_are_parallel_loops(cx, loop) and
-    loops_are_compatible(cx, loop)
+  local has_demand = has_demand_spmd(cx, loop)
+
+  local report_fail = ignore
+  if has_demand then
+    report_fail = report.error
+  end
+
+  -- Currently, don't apply SPMD unless explicitly requested.
+  if has_demand then
+    report_fail("unable to apply SPMD transformation: not requested")
+    return false
+  end
+
+  if not whitelist_node_types(cx, loop) then
+    report_fail(
+      cx.graph:node_label(loop),
+      "unable to apply SPMD transformation: block contains bad node types")
+    return false
+  end
+
+  if not has_leaves(cx, loop) then
+    report_fail(
+      cx.graph:node_label(loop),
+      "unable to apply SPMD transformation: block contains no recognizable leaf loops")
+    return false
+  end
+
+  if not leaves_are_parallel_loops(cx, loop) then
+    report_fail(
+      cx.graph:node_label(loop),
+      "unable to apply SPMD transformation: leaf loops are not parallelizable")
+    return false
+  end
+
+  if not loops_are_compatible(cx, loop) then
+    report_fail(
+      cx.graph:node_label(loop),
+      "unable to apply SPMD transformation: leaf loops use inconsistent bounds")
+    return false
+  end
+
+  return true
 end
 
 local function only(list)
@@ -6440,9 +6479,6 @@ local function spmdize_eligible_loop(cx, loops)
       -- Don't need to re-analyze already-SPMDized loops.
       -- loops[new_loop] = true
       return true
-    elseif has_demand_spmd(cx, loop) then
-      report.error(cx.graph:node_label(loop),
-                   "unable to apply SPMD transformation")
     end
   end
   return false
