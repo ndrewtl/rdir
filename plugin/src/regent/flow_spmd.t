@@ -117,20 +117,29 @@ local function has_demand_spmd(cx, nid)
   return label.annotations.spmd:is(ast.annotation.Demand)
 end
 
+local function whitelist(label)
+  return label:is(flow.node.Binary) or
+    label:is(flow.node.Cast) or
+    label:is(flow.node.IndexAccess) or
+    label:is(flow.node.Assignment) or
+    label:is(flow.node.Reduce) or
+    (label:is(flow.node.Task) and not label.opaque) or
+    label:is(flow.node.Open) or
+    label:is(flow.node.Close) or
+    label:is(flow.node.ctrl) or
+    label:is(flow.node.data) or
+    label:is(flow.node.Constant) or
+    label:is(flow.node.Function)
+end
+
 local function whitelist_node_types(cx, loop_nid)
   local loop_label = cx.graph:node_label(loop_nid)
   local block_cx = cx:new_graph_scope(loop_label.block)
-  return block_cx.graph:traverse_nodes_recursive(
-    function(_, _, label)
-      return (
-        label:is(flow.node.Binary) or label:is(flow.node.Cast) or
-          label:is(flow.node.IndexAccess) or
-          label:is(flow.node.Assignment) or label:is(flow.node.Reduce) or
-          (label:is(flow.node.Task) and not label.opaque) or
-          label:is(flow.node.Open) or label:is(flow.node.Close) or
-          label:is(flow.node.ctrl) or label:is(flow.node.data) or
-          label:is(flow.node.Constant) or label:is(flow.node.Function)) and nil
-    end) == nil
+  local result = block_cx.graph:traverse_nodes_recursive(
+    function(graph, nid, label)
+      return not whitelist(label) and {graph, nid} or nil
+    end)
+  return result == nil, unpack(result)
 end
 
 local function has_leaves(cx, loop_nid)
@@ -401,9 +410,10 @@ local function can_spmdize(cx, loop)
     return false
   end
 
-  if not whitelist_node_types(cx, loop) then
+  local ok, bad_graph, bad_nid = whitelist_node_types(cx, loop)
+  if not ok then
     report_fail(
-      cx.graph:node_label(loop),
+      bad_graph:node_label(bad_nid),
       "unable to apply SPMD transformation: block contains bad node types")
     return false
   end
