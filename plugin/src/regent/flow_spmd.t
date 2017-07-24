@@ -395,7 +395,9 @@ local function can_spmdize(cx, loop)
 
   -- Currently, don't apply SPMD unless explicitly requested.
   if has_demand then
-    report_fail("unable to apply SPMD transformation: not requested")
+    report_fail(
+      cx.graph:node_label(loop),
+      "unable to apply SPMD transformation: not requested")
     return false
   end
 
