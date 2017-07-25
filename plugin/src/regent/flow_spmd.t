@@ -849,14 +849,19 @@ local function normalize_communication_subgraph(cx, shard_loop)
   for _, close_nid in ipairs(close_nids) do
     -- Trivial closes are ones where the output of the close is
     -- immediately consumed only by close nodes.
-    local has_nonclose, has_close, has_no_reduction
+    local has_reduction
+    local source_nids = block_cx.graph:filter_immediate_predecessors_by_edges(
+      isnt_happens_before, close_nid)
+    for _, source_nid in ipairs(source_nids) do
+      has_reduction = #block_cx.graph:filter_immediate_predecessors_by_edges(
+        is_reduce, source_nid) > 0
+      if has_reduction then break end
+    end
+
+    local has_nonclose, has_close
     local result_nids = block_cx.graph:filter_immediate_successors_by_edges(
       isnt_happens_before, close_nid)
     for _, result_nid in ipairs(result_nids) do
-      has_no_reduction = #block_cx.graph:filter_immediate_predecessors_by_edges(
-        is_reduce, result_nid) == 0
-      if not has_no_reduction then break end
-
       local consumer_nids =
         block_cx.graph:filter_immediate_successors_by_edges(
           isnt_happens_before, result_nid)
@@ -872,23 +877,35 @@ local function normalize_communication_subgraph(cx, shard_loop)
       if has_close and has_nonclose then break end
     end
 
-    local is_trivial = has_close and not has_nonclose and has_no_reduction
+    local is_trivial = has_close and not has_nonclose and not has_reduction
     if is_trivial then
-      local source_nids = block_cx.graph:filter_immediate_predecessors_by_edges(
-        isnt_happens_before, close_nid)
-      local result_nids = block_cx.graph:filter_immediate_successors_by_edges(
-        isnt_happens_before, close_nid)
       for _, result_nid in ipairs(result_nids) do
-        local consumer_nids =
-          block_cx.graph:filter_immediate_successors_by_edges(
-            isnt_happens_before, result_nid)
-        for _, source_nid in ipairs(source_nids) do
-          for _, consumer_nid in ipairs(consumer_nids) do
-            block_cx.graph:copy_outgoing_edges(
-              function(edge) return edge.to_node == consumer_nid end,
+        local result_label = block_cx.graph:node_label(result_nid)
+
+        -- Copy incoming edges from result to matching source. (These
+        -- should only be reductions.)
+        do
+          local source_nid = find_matching_input(
+            block_cx, close_nid, result_label.region_type, result_label.field_path)
+
+          if source_nid then
+            block_cx.graph:copy_incoming_edges(
+              function(edge)
+                return isnt_happens_before(edge) and
+                edge.from_node ~= close_nid
+              end,
               result_nid, source_nid, false)
           end
         end
+
+        -- Copy outgoing edges from result to all sources. (Remember,
+        -- all consumers are close ops.)
+        for _, source_nid in ipairs(source_nids) do
+          block_cx.graph:copy_outgoing_edges(
+            isnt_happens_before,
+            result_nid, source_nid, false)
+        end
+
         block_cx.graph:remove_node(result_nid)
       end
       block_cx.graph:remove_node(close_nid)
