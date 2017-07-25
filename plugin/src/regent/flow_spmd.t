@@ -301,32 +301,41 @@ local function bounds_eq(label1, label2)
   end
 end
 
+local function is_exact_match(label, region_type, field_path)
+  return label:is(flow.node.data) and
+    label.region_type == region_type and
+    (not field_path or label.field_path == field_path)
+end
+
+local function only(list)
+  assert(#list == 1)
+  return list[1]
+end
+
+local function maybe(list)
+  return list[1]
+end
+
+local function first(list)
+  assert(#list >= 1)
+  return list[1]
+end
+
 local function find_first_instance(cx, value_label, optional)
-  local nids = cx.graph:toposort()
-  for _, nid in ipairs(nids) do
-    local label = cx.graph:node_label(nid)
-    if label:is(flow.node.data) and
-      label.region_type == value_label.region_type and
-      label.field_path == value_label.field_path
-    then
-      return nid
-    end
+  local function match(_, label)
+    return is_exact_match(
+      label, value_label.region_type, value_label.field_path)
   end
-  assert(optional)
+  return (optional and maybe or first)(cx.graph:filter_toposort(nil, match))
 end
 
 local function find_last_instance(cx, value_label, optional)
-  local nids = cx.graph:inverse_toposort()
-  for _, nid in ipairs(nids) do
-    local label = cx.graph:node_label(nid)
-    if label:is(flow.node.data) and
-      label.region_type == value_label.region_type and
-      label.field_path == value_label.field_path
-    then
-      return nid
-    end
+  local function match(_, label)
+    return is_exact_match(
+      label, value_label.region_type, value_label.field_path)
   end
-  assert(optional)
+  return (optional and maybe or first)(
+    cx.graph:filter_inverse_toposort(nil, match))
 end
 
 -- Returns labels for the loop's bounds as a Terra list, consisting of two
@@ -469,20 +478,6 @@ local function can_spmdize(cx, loop)
   return true
 end
 
-local function only(list)
-  assert(#list == 1)
-  return list[1]
-end
-
-local function maybe(list)
-  return list[1]
-end
-
-local function first(list)
-  assert(#list >= 1)
-  return list[1]
-end
-
 local function find_open_results(cx, open_nid)
   local result_nids = terralib.newlist()
   cx.graph:traverse_immediate_successors(
@@ -545,12 +540,6 @@ local function find_close_results(cx, close_nid)
     end,
     close_nid)
   return result_nids
-end
-
-local function is_exact_match(label, region_type, field_path)
-  return label:is(flow.node.data) and
-    label.region_type == region_type and
-    (not field_path or label.field_path == field_path)
 end
 
 local function find_matching_input(cx, op_nid, region_type, field_path)
@@ -671,28 +660,26 @@ end
 local function compute_contributions(cx)
   local contributions = data.new_recursive_map(2)
 
-  local nids = cx.graph:toposort()
+  local nids = cx.graph:filter_toposort(
+    nil, function(_, label) return label:is(flow.node.data) end)
   for _, nid in ipairs(nids) do
-    local label = cx.graph:node_label(nid)
-    if label:is(flow.node.data) then
-      local writers = cx.graph:filter_immediate_predecessors_by_edges(
-        is_write_reduce, nid)
-      if #writers > 0 then
-        for _, writer_nid in ipairs(writers) do
-          local writer_label = cx.graph:node_label(writer_nid)
-          if writer_label:is(flow.node.Close) then
-            -- This version gathers contributions from the close's inputs.
-            local reads = cx.graph:filter_immediate_predecessors_by_edges(
-              is_read, writer_nid)
-            for _, other_nid in ipairs(reads) do
-              for _, other_contribution in contributions[other_nid]:keys() do
-                contributions[nid][other_contribution] = true
-              end
+    local writers = cx.graph:filter_immediate_predecessors_by_edges(
+      is_write_reduce, nid)
+    if #writers > 0 then
+      for _, writer_nid in ipairs(writers) do
+        local writer_label = cx.graph:node_label(writer_nid)
+        if writer_label:is(flow.node.Close) then
+          -- This version gathers contributions from the close's inputs.
+          local reads = cx.graph:filter_immediate_predecessors_by_edges(
+            is_read, writer_nid)
+          for _, other_nid in ipairs(reads) do
+            for _, other_contribution in contributions[other_nid]:keys() do
+              contributions[nid][other_contribution] = true
             end
-          else
-            -- This version actually contains fresh data; reset contributions.
-            contributions[nid][nid] = true
           end
+        else
+          -- This version actually contains fresh data; reset contributions.
+          contributions[nid][nid] = true
         end
       end
     end
@@ -2620,9 +2607,8 @@ local function rewrite_copies_subgraph(cx, loop_nid, inverse_mapping, intersecti
   local block_cx = cx:new_graph_scope(loop_label.block)
 
   -- Issue copies for each close.
-  local close_nids = data.filter(
-    function(nid) return block_cx.graph:node_label(nid):is(flow.node.Close) end,
-    block_cx.graph:toposort())
+  local close_nids = block_cx.graph:filter_toposort(
+    nil, function(_, label) return label:is(flow.node.Close) end)
   local remove = terralib.newlist()
   local sync = data.newmap()
   for _, close_nid in ipairs(close_nids) do

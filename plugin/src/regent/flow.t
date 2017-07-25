@@ -872,12 +872,19 @@ local function filter_toposort_node(graph, node, visited, path, sort,
   end
   if not rawget(visited, node) then
     path[node] = true
-    for _, child in pairs(
-      graph:filter_immediate_successors_by_edges(edge_filter, node))
-    do
+
+    local children
+    if edge_filter then
+      children = graph:filter_immediate_successors_by_edges(edge_filter, node)
+    else
+      children = graph:immediate_successors(node)
+    end
+
+    for _, child in pairs(children) do
       filter_toposort_node(graph, child, visited, path, sort,
                            node_filter, edge_filter)
     end
+
     path[node] = false
     visited[node] = true
     if node_filter(node, graph:node_label(node)) then sort:insert(node) end
@@ -891,12 +898,19 @@ local function filter_inverse_toposort_node(graph, node, visited, path, sort,
   end
   if not rawget(visited, node) then
     path[node] = true
-    for _, child in pairs(
-      graph:filter_immediate_predecessors_by_edges(edge_filter, node))
-    do
+
+    local children
+    if edge_filter then
+      children = graph:filter_immediate_predecessors_by_edges(edge_filter, node)
+    else
+      children = graph:immediate_predecessors(node)
+    end
+
+    for _, child in pairs(children) do
       filter_inverse_toposort_node(graph, child, visited, path, sort,
                                    node_filter, edge_filter)
     end
+
     path[node] = false
     visited[node] = true
     if node_filter(node, graph:node_label(node)) then sort:insert(node) end
@@ -906,15 +920,32 @@ end
 function graph:filter_toposort(node, node_filter, edge_filter)
   local visited = {}
   local sort = terralib.newlist()
-  filter_toposort_node(self, node, visited, {}, sort, node_filter, edge_filter)
+  if node then
+    filter_toposort_node(
+      self, node, visited, {}, sort, node_filter, edge_filter)
+  else
+    self:traverse_nodes(
+      function(node)
+        filter_toposort_node(
+          self, node, visited, {}, sort, node_filter, edge_filter)
+      end)
+  end
   return reverse(sort)
 end
 
 function graph:filter_inverse_toposort(node, node_filter, edge_filter)
   local visited = {}
   local sort = terralib.newlist()
-  filter_inverse_toposort_node(self, node, visited, {}, sort,
-                               node_filter, edge_filter)
+  if node then
+    filter_inverse_toposort_node(
+      self, node, visited, {}, sort, node_filter, edge_filter)
+  else
+    self:traverse_nodes(
+      function(node)
+        filter_inverse_toposort_node(
+          self, node, visited, {}, sort, node_filter, edge_filter)
+      end)
+  end
   return reverse(sort)
 end
 
