@@ -417,24 +417,6 @@ function graph:traverse_edges(fn)
   end
 end
 
-function graph:map_edges(fn)
-  for from, to_list in pairs(self.edges) do
-    for to, edge_list in pairs(to_list) do
-      for _, edge in pairs(edge_list) do
-        local result = fn(
-          from, edge.from_port, self:node_label(from),
-          to, edge.to_port, self:node_label(to),
-          edge.label)
-        if result ~= nil then
-          assert(result:is(flow.edge))
-          self:set_edge_label(
-            result, from, edge.from_port, to, edge.to_port)
-        end
-      end
-    end
-  end
-end
-
 local function pack_edge(from_node, to_node, edge)
   return {
     from_node = from_node,
@@ -443,6 +425,21 @@ local function pack_edge(from_node, to_node, edge)
     to_port = edge.to_port,
     label = edge.label,
   }
+end
+
+function graph:map_edges(fn)
+  for from, to_list in pairs(self.edges) do
+    for to, edge_list in pairs(to_list) do
+      for _, edge in pairs(edge_list) do
+        local result = fn(pack_edge(from, to, edge))
+        if result ~= nil then
+          assert(result:is(flow.edge))
+          self:set_edge_label(
+            result, from, edge.from_port, to, edge.to_port)
+        end
+      end
+    end
+  end
 end
 
 function graph:traverse_incoming_edges(fn, node)

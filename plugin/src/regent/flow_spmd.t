@@ -87,11 +87,34 @@ end
 
 local flow_spmd = {}
 
-local function isnt_happens_before(edge)
-  return not edge.label:is(flow.edge.HappensBefore)
+local function is_none(edge)
+  return edge.label:is(flow.edge.None)
+end
+local function is_read(edge)
+  return edge.label:is(flow.edge.Read)
+end
+local function is_write(edge)
+  return edge.label:is(flow.edge.Write)
 end
 local function is_reduce(edge)
   return edge.label:is(flow.edge.Reduce)
+end
+local function is_read_write(edge)
+  return edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write)
+end
+local function is_write_reduce(edge)
+  return edge.label:is(flow.edge.Write) or edge.label:is(flow.edge.Reduce)
+end
+local function is_any_privilege(edge)
+  return edge.label:is(flow.edge.None) or edge.label:is(flow.edge.Read) or
+    edge.label:is(flow.edge.Write) or edge.label:is(flow.edge.Reduce)
+end
+local function is_happens_before(edge)
+  return edge.label:is(flow.edge.HappensBefore)
+end
+
+local function isnt_happens_before(edge)
+  return not edge.label:is(flow.edge.HappensBefore)
 end
 
 local function is_leaf(cx, nid)
@@ -174,7 +197,7 @@ local function get_incoming_reduction_op(cx, nid)
   local port = false
   cx.graph:traverse_incoming_edges(
     function(_, _, edge)
-      if edge.label:is(flow.edge.Reduce) then
+      if is_reduce(edge) then
         assert(not op or op == edge.label.op)
         op = edge.label.op
         port = edge.from_port
@@ -472,7 +495,7 @@ local function find_open_results(cx, open_nid)
           function(from_node, _, edge)
             local label = cx.graph:node_label(from_node)
             if not (label:is(flow.node.Open) or label:is(flow.node.Close)) and
-              not edge.label:is(flow.edge.HappensBefore)
+              isnt_happens_before(edge)
             then
               is_external = true
             end
@@ -482,7 +505,7 @@ local function find_open_results(cx, open_nid)
           function(_, to_node, edge)
             local label = cx.graph:node_label(to_node)
             if not (label:is(flow.node.Open) or label:is(flow.node.Close)) and
-              not edge.label:is(flow.edge.HappensBefore)
+              isnt_happens_before(edge)
             then
               is_external = true
             end
@@ -533,9 +556,8 @@ end
 local function find_matching_input(cx, op_nid, region_type, field_path)
   return maybe(cx.graph:filter_immediate_predecessors_by_edges(
     function(edge, label)
-      if edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write) then
-        return is_exact_match(label, region_type, field_path)
-      end
+      return is_read_write(edge) and
+        is_exact_match(label, region_type, field_path)
     end,
     op_nid))
 end
@@ -543,9 +565,8 @@ end
 local function find_matching_inputs(cx, op_nid, region_type, field_path)
   return cx.graph:filter_immediate_predecessors_by_edges(
     function(edge, label)
-      if edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write) then
-        return is_exact_match(label, region_type, field_path)
-      end
+      return is_read_write(edge) and
+        is_exact_match(label, region_type, field_path)
     end,
     op_nid)
 end
@@ -553,9 +574,8 @@ end
 local function find_matching_output(cx, op_nid, region_type, field_path)
   return maybe(cx.graph:filter_immediate_successors_by_edges(
     function(edge, label)
-      if edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write) then
-        return is_exact_match(label, region_type, field_path)
-      end
+      return is_read_write(edge) and
+        is_exact_match(label, region_type, field_path)
     end,
     op_nid))
 end
@@ -564,20 +584,13 @@ local function find_match_backwards(cx, op_nid, region_type, field_path)
   return maybe(cx.graph:filter_nodes(
     function(nid, label)
       return is_exact_match(label, region_type, field_path) and
-        cx.graph:reachable(
-          nid, op_nid,
-          function(edge)
-            return edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write)
-          end)
+        cx.graph:reachable(nid, op_nid, is_read_write)
     end))
 end
 
 local function find_predecessor_maybe(cx, nid)
   local preds = cx.graph:filter_immediate_predecessors_by_edges(
-    function(edge)
-      return edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write)
-    end,
-    nid)
+    is_read_write, nid)
   if #preds == 0 then
     return
   end
@@ -632,22 +645,21 @@ local function compute_version_numbers(cx)
       local pred_label = cx.graph:node_label(edge.from_node)
 
       -- Writes immediately bump the version.
-      if edge.label:is(flow.edge.Write) and
+      if is_write(edge) and
         not (pred_label:is(flow.node.Open) or pred_label:is(flow.node.Close))
       then
         contribute = 1
 
       -- Reductions are pending until a subsequent read.
-      elseif edge.label:is(flow.edge.Read) and
+      elseif is_read(edge) and
         #cx.graph:filter_immediate_predecessors_by_edges(
-          function(edge) return edge.label:is(flow.edge.Reduce) end,
-          edge.from_node) > 0
+          is_reduce, edge.from_node) > 0
       then
         contribute = 1
       end
 
       -- Record the maximum version (after contributions).
-      if not edge.label:is(flow.edge.HappensBefore) then
+      if isnt_happens_before(edge) then
         version = data.max(version, versions[edge.from_node] + contribute)
       end
     end
@@ -664,19 +676,14 @@ local function compute_contributions(cx)
     local label = cx.graph:node_label(nid)
     if label:is(flow.node.data) then
       local writers = cx.graph:filter_immediate_predecessors_by_edges(
-        function(edge)
-          return edge.label:is(flow.edge.Write) or
-            edge.label:is(flow.edge.Reduce)
-        end,
-        nid)
+        is_write_reduce, nid)
       if #writers > 0 then
         for _, writer_nid in ipairs(writers) do
           local writer_label = cx.graph:node_label(writer_nid)
           if writer_label:is(flow.node.Close) then
             -- This version gathers contributions from the close's inputs.
             local reads = cx.graph:filter_immediate_predecessors_by_edges(
-              function(edge) return edge.label:is(flow.edge.Read) end,
-              writer_nid)
+              is_read, writer_nid)
             for _, other_nid in ipairs(reads) do
               for _, other_contribution in contributions[other_nid]:keys() do
                 contributions[nid][other_contribution] = true
@@ -751,7 +758,7 @@ local function normalize_communication_subgraph(cx, shard_loop)
         -- Find the immediate ancestor.
         local ancestor_nids = block_cx.graph:filter_immediate_predecessors_by_edges(
           function(edge, label)
-            return not edge.label:is(flow.edge.HappensBefore) and
+            return isnt_happens_before(edge) and
               block_cx.tree:is_subregion(result_label.region_type, label.region_type) and
               result_label.field_path == label.field_path
           end,
@@ -805,9 +812,7 @@ local function normalize_communication_subgraph(cx, shard_loop)
                 return is_exact_match(
                   label, result_label.region_type, result_label.field_path)
               end,
-              function(edge, _)
-                return edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write)
-              end))
+              is_read_write))
 
             assert(input_nid)
             block_cx.graph:add_edge(
@@ -938,7 +943,7 @@ local function normalize_communication_subgraph(cx, shard_loop)
         if #block_cx.graph:filter_immediate_predecessors_by_edges(
             function(edge)
               local label = block_cx.graph:node_label(edge.from_node)
-              return (edge.label:is(flow.edge.Write) or edge.label:is(flow.edge.Reduce)) and
+              return is_write_reduce(edge) and
                 not (label:is(flow.node.Open) or label:is(flow.node.Close))
             end,
             input_nid) > 0
@@ -1007,8 +1012,7 @@ local function normalize_communication_subgraph(cx, shard_loop)
         if result_nid then
           -- Don't destroy a close that was needed to separate reductions.
           if #block_cx.graph:filter_immediate_predecessors_by_edges(
-            function(edge) return edge.label:is(flow.edge.Reduce) end,
-            result_nid) > 0
+            is_reduce, result_nid) > 0
           then
             delete = false
           else
@@ -1180,8 +1184,7 @@ local function normalize_communication_subgraph(cx, shard_loop)
       local read_label = block_cx.graph:node_label(read_nid)
       if read_label.region_type ~= write_label.region_type then
         local reducers = block_cx.graph:filter_immediate_predecessors_by_edges(
-          function(edge) return edge.label:is(flow.edge.Reduce) end,
-          read_nid)
+          is_reduce, read_nid)
         if #reducers > 0 then
           local first_nid = find_first_instance(block_cx, read_label)
           local readers = data.filter(
@@ -1226,27 +1229,19 @@ local function normalize_communication_subgraph(cx, shard_loop)
   for _, data_nid in ipairs(data_nids) do
     local close_nids = block_cx.graph:filter_immediate_successors_by_edges(
       function(edge)
-        return edge.label:is(flow.edge.Read) and
+        return is_read(edge) and
           block_cx.graph:node_label(edge.to_node):is(flow.node.Close)
       end,
     data_nid)
     local writer_nids = block_cx.graph:filter_immediate_predecessors_by_edges(
-      function(edge)
-        return edge.label:is(flow.edge.Write) or edge.label:is(flow.edge.Reduce)
-      end,
-      data_nid)
+      is_write_reduce, data_nid)
     if #close_nids > 1 and #writer_nids == 0 then
       -- Look for a dominator among the close ops.
       local dominator_nid
       for _, nid in ipairs(close_nids) do
         local dominates = true
         for _, other_nid in ipairs(close_nids) do
-          if not block_cx.graph:reachable(
-            other_nid, nid,
-            function(edge)
-              return edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write)
-            end)
-          then
+          if not block_cx.graph:reachable(other_nid, nid, is_read_write) then
             dominates = false
             break
           end
@@ -1259,7 +1254,7 @@ local function normalize_communication_subgraph(cx, shard_loop)
 
       block_cx.graph:remove_outgoing_edges(
         function(edge)
-          return edge.label:is(flow.edge.Read) and
+          return is_read(edge) and
             edge.to_node ~= dominator_nid and
             block_cx.graph:node_label(edge.to_node):is(flow.node.Close)
         end,
@@ -1553,7 +1548,7 @@ local function rewrite_interior_regions(cx, old_type, new_type, new_symbol, make
 
     local index_nids = cx.graph:filter_immediate_successors_by_edges(
       function(edge, label)
-        return edge.label:is(flow.edge.None) and label:is(flow.node.IndexAccess)
+        return is_none(edge) and label:is(flow.node.IndexAccess)
       end,
       new_nid)
     for _, index_nid in ipairs(index_nids) do
@@ -1676,7 +1671,7 @@ local function issue_with_scratch_fields(cx, op, reduction_nids, other_nids,
     -- Copy old edges.
     cx.graph:copy_outgoing_edges(
       function(edge)
-        return edge.label:is(flow.edge.Read) and
+        return is_read(edge) and
           edge.to_node == user_nid and edge.to_port == user_port
       end,
       old_nid, new_nid, true)
@@ -1726,19 +1721,17 @@ local function issue_with_scratch_fields(cx, op, reduction_nids, other_nids,
       fill_nid, 2)
 
     -- Move reduction edges over to the new input.
-    cx.graph:copy_incoming_edges(
-      function(edge) return edge.label:is(flow.edge.Reduce) end,
-      old_nid, new_nid_reduced, true)
+    cx.graph:copy_incoming_edges(is_reduce, old_nid, new_nid_reduced, true)
 
     -- Move read edges over to new input.
     local copy_edges = cx.graph:copy_outgoing_edges(
       function(edge)
-        return edge.label:is(flow.edge.Read) and
+        return is_read(edge) and
           cx.graph:node_label(edge.to_node):is(flow.node.Copy) and
           #cx.graph:filter_outgoing_edges(
             function(edge2)
               local label = cx.graph:node_label(edge2.to_node)
-              return edge2.label:is(flow.edge.Write) and
+              return is_write(edge2) and
                 is_exact_match(label, old_type, field_path) and
                 edge2.from_port == edge.to_port
             end,
@@ -1802,7 +1795,7 @@ local function is_reduction_communicated(cx, nid)
   local op = get_incoming_reduction_op(cx, nid)
   local copy_nids = cx.graph:filter_immediate_successors_by_edges(
     function(edge)
-      return edge.label:is(flow.edge.Read) and
+      return is_read(edge) and
         cx.graph:node_label(edge.to_node):is(flow.node.Copy)
     end,
     nid)
@@ -1841,8 +1834,7 @@ local function rewrite_reduction_scratch_fields_subgraph(
     if not touched_nids[data_nid] and is_reduction_communicated(block_cx, data_nid) then
       local op, port = get_incoming_reduction_op(block_cx, data_nid)
       local user_nid = only(block_cx.graph:filter_immediate_predecessors_by_edges(
-        function(edge) return edge.label:is(flow.edge.Reduce) end,
-        data_nid))
+        is_reduce, data_nid))
       local reduction_nids = block_cx.graph:filter_immediate_successors_by_edges(
         function(edge)
           return edge.from_port == port and
@@ -1851,7 +1843,7 @@ local function rewrite_reduction_scratch_fields_subgraph(
         user_nid)
       local other_nids = block_cx.graph:filter_immediate_predecessors_by_edges(
         function(edge)
-          return edge.to_port == port and edge.label:is(flow.edge.Read)
+          return edge.to_port == port and is_read(edge)
         end,
         user_nid)
 
@@ -2482,10 +2474,7 @@ local function issue_intersection_copy_synchronization_forwards(
       local dominated = false
       for _, other_nid in ipairs(consumer_nids) do
         if nid ~= other_nid and cx.graph:reachable(
-          other_nid, nid,
-          function(edge)
-            return edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write)
-          end)
+          other_nid, nid, is_read_write)
         then
           dominated = true
           break
@@ -2560,10 +2549,7 @@ local function issue_intersection_copy_synchronization_backwards(
       local dominated = false
       for _, other_nid in ipairs(prev_consumer_nids) do
         if nid ~= other_nid and cx.graph:reachable(
-          nid, other_nid,
-          function(edge)
-            return edge.label:is(flow.edge.Read) or edge.label:is(flow.edge.Write)
-          end)
+          nid, other_nid, is_read_write)
         then
           dominated = true
           break
@@ -2674,11 +2660,9 @@ local function rewrite_copies_subgraph(cx, loop_nid, inverse_mapping, intersecti
 
         -- Migrate other types of edges...
         block_cx.graph:copy_incoming_edges(
-          function(edge) return edge.label:is(flow.edge.HappensBefore) end,
-          close_nid, copy_nid, false)
+          is_happens_before, close_nid, copy_nid, false)
         block_cx.graph:copy_outgoing_edges(
-          function(edge) return edge.label:is(flow.edge.HappensBefore) end,
-          close_nid, copy_nid, false)
+          is_happens_before, close_nid, copy_nid, false)
 
         needs_removal = true
       end
@@ -2893,7 +2877,7 @@ local function rewrite_scalar_communication_subgraph(cx, loop_nid)
 
   local target_nids = cx.graph:filter_immediate_successors_by_edges(
     function(edge, label)
-      return label:is(flow.node.data.Scalar) and edge.label:is(flow.edge.Reduce)
+      return label:is(flow.node.data.Scalar) and is_reduce(edge)
     end,
     loop_nid)
   for _, target_nid in ipairs(target_nids) do
@@ -2916,20 +2900,14 @@ local function rewrite_scalar_communication_subgraph(cx, loop_nid)
     local block_target_nid = block_target_nids[1]
 
     local block_contributor_nids = block_cx.graph:filter_immediate_predecessors_by_edges(
-      function(edge, label)
-        return edge.label:is(flow.edge.Reduce)
-      end,
-      block_target_nid)
+      is_reduce, block_target_nid)
     assert(#block_contributor_nids == 1) -- For now there must be exactly one.
     local block_contributor_nid = block_contributor_nids[1]
     assert(block_cx.graph:node_label(block_contributor_nid):is(flow.node.Reduce))
 
     local block_contribution_nid = only(
       block_cx.graph:filter_immediate_predecessors_by_edges(
-        function(edge, label)
-          return edge.label:is(flow.edge.Read)
-        end,
-        block_contributor_nid))
+        is_read, block_contributor_nid))
     local block_contribution_label = block_cx.graph:node_label(block_contribution_nid)
     assert(block_contribution_label:is(flow.node.data.Scalar))
 
@@ -3124,7 +3102,7 @@ local function rewrite_scalar_communication_subgraph(cx, loop_nid)
 
     -- 11. Remove reduction edges from target.
     cx.graph:remove_incoming_edges(
-      function(edge) return edge.label:is(flow.edge.Reduce) and edge.from_node == loop_nid end,
+      function(edge) return is_reduce(edge) and edge.from_node == loop_nid end,
       target_nid)
   end
 
@@ -3722,10 +3700,7 @@ local function rewrite_inner_fornum_loop_bounds(cx, loop_label, shard_part_indic
     block_cx.graph:copy_outgoing_edges(
       function(edge)
         return block_cx.graph:reachable(
-          edge.to_node, index_access_nid,
-          function(edge)
-            return not edge.label:is(flow.edge.HappensBefore)
-          end)
+          edge.to_node, index_access_nid, isnt_happens_before)
       end,
     global_index_nid,
     local_index_nid,
@@ -3827,9 +3802,7 @@ local function rewrite_fornum_loops_in_shard(cx, shard_loop)
           local value_nid, edge = get_input(inputs, i)
           local value_inputs = inner_cx.graph:incoming_edges(value_nid)
           for _, edge in ipairs(value_inputs) do
-            if not edge.label:is(flow.edge.HappensBefore) then
-              assert(false)
-            end
+            assert(is_happens_before(edge))
           end
           inner_cx.graph:replace_edges(edge.to_node, edge.from_node, new_bounds[i])
           if #inner_cx.graph:outgoing_edges(value_nid) == 0 then
@@ -4672,50 +4645,46 @@ local function rewrite_shard_slices(cx, shard_vars, global_vars, lists,
     parent_intersections, parent_barriers
 end
 
-local function make_simultaneous_coherence(from_nid, from_port, from_label,
-                                           to_nid, to_port, to_label, edge_label)
-  local from_type = from_label:is(flow.node.data) and from_label.region_type
-  local to_type = to_label:is(flow.node.data) and to_label.region_type
-  if edge_label:is(flow.edge.None) or edge_label:is(flow.edge.Read) or
-    edge_label:is(flow.edge.Write) or edge_label:is(flow.edge.Reduce)
-  then
-    if (from_type and std.is_list_of_regions(from_type)) or
-      (to_type and std.is_list_of_regions(to_type))
-    then
-      -- Lists are simlutaneous.
-      local coherence = flow.coherence_kind.Simultaneous {}
-      local flag = flow.flag_kind.NoFlag {}
-      if (from_type and from_type:list_depth() > 1) or
-        (to_type and to_type:list_depth() > 1)
+local function upgrade_simultaneous_coherence(cx)
+  local function make_simultaneous_coherence(edge)
+    local from_label = cx.graph:node_label(edge.from_node)
+    local to_label = cx.graph:node_label(edge.to_node)
+    local from_type = from_label:is(flow.node.data) and from_label.region_type
+    local to_type = to_label:is(flow.node.data) and to_label.region_type
+    if is_any_privilege(edge) then
+      if (from_type and std.is_list_of_regions(from_type)) or
+        (to_type and std.is_list_of_regions(to_type))
       then
-        -- Intersections are no access.
-        flag = flow.flag_kind.NoAccessFlag {}
+        -- Lists are simlutaneous.
+        local coherence = flow.coherence_kind.Simultaneous {}
+        local flag = flow.flag_kind.NoFlag {}
+        if (from_type and from_type:list_depth() > 1) or
+          (to_type and to_type:list_depth() > 1)
+        then
+          -- Intersections are no access.
+          flag = flow.flag_kind.NoAccessFlag {}
+        end
+        return edge.label {
+          coherence = coherence,
+          flag = flag,
+        }
       end
-      return edge_label {
-        coherence = coherence,
-        flag = flag,
-      }
     end
   end
-end
 
-local function make_exclusive_coherence(from_nid, from_port, from_label,
-                                           to_nid, to_port, to_label, edge_label)
-  if edge_label:is(flow.edge.None) or edge_label:is(flow.edge.Read) or
-    edge_label:is(flow.edge.Write) or edge_label:is(flow.edge.Reduce)
-  then
-    return edge_label {
-      coherence = flow.coherence_kind.Exclusive {},
-      flag = flow.flag_kind.NoFlag {},
-    }
-  end
-end
-
-local function upgrade_simultaneous_coherence(cx)
   cx.graph:map_edges(make_simultaneous_coherence)
 end
 
 local function downgrade_simultaneous_coherence(cx)
+  local function make_exclusive_coherence(edge)
+    if is_any_privilege(edge) then
+      return edge.label {
+        coherence = flow.coherence_kind.Exclusive {},
+        flag = flow.flag_kind.NoFlag {},
+      }
+    end
+  end
+
   cx.graph:map_edges(make_exclusive_coherence)
 end
 
@@ -4851,7 +4820,7 @@ end
 local function find_match_incoming(cx, predicate, nid)
   local edges = cx.graph:incoming_edges(nid)
   for _, edge in ipairs(edges) do
-    if not edge.label:is(flow.edge.HappensBefore) then
+    if isnt_happens_before(edge) then
       local other_nid = edge.from_node
       local label = cx.graph:node_label(other_nid)
       if predicate(other_nid, label) then
@@ -4864,7 +4833,7 @@ end
 local function find_match_outgoing(cx, predicate, nid)
   local edges = cx.graph:outgoing_edges(nid)
   for _, edge in ipairs(edges) do
-    if not edge.label:is(flow.edge.HappensBefore) then
+    if isnt_happens_before(edge) then
       local other_nid = edge.to_node
       local label = cx.graph:node_label(other_nid)
       if predicate(other_nid, label) then
@@ -5070,7 +5039,7 @@ local function find_root_region(cx, nid)
       function(edge, from_label)
         local ancestor = cx.tree:lowest_common_ancestor(from_label.region_type, label.region_type)
         return is_exact_match(from_label, ancestor, from_label.field_path) and
-          edge.label:is(flow.edge.Read)
+          is_read(edge)
       end,
       writer)
     assert(#reads == 1)
@@ -5085,8 +5054,7 @@ end
 local function find_close_region(cx, nid, loop)
   local closes = cx.graph:filter_immediate_successors_by_edges(
     function(edge, to_label)
-      return to_label:is(flow.node.Close) and
-        edge.label:is(flow.edge.Read)
+      return to_label:is(flow.node.Close) and is_read(edge)
     end,
     nid)
   if #closes < 1 then
@@ -5586,9 +5554,7 @@ local function issue_input_copies_partition(
       cx, partition_nids, name_nids, new_nids,
       std.as_read(first_partition_label.value.expr_type), region_type,
       nparts_nid, part_indices_nid, shadow, first_new_label.value.span)
-    cx.graph:copy_incoming_edges(
-      function(edge) return edge.label:is(flow.edge.HappensBefore) end,
-      old_loop, copy_nid)
+    cx.graph:copy_incoming_edges(is_happens_before, old_loop, copy_nid)
   end
 end
 
@@ -5699,9 +5665,7 @@ local function issue_output_copies_partition(
       cx, new_nids, opened_partition_nids, partition_nids,
       region_type, std.as_read(first_partition_label.value.expr_type),
       nparts_nid, part_indices_nid, shadow, first_new_label.value.span)
-    cx.graph:copy_outgoing_edges(
-      function(edge) return edge.label:is(flow.edge.HappensBefore) end,
-      old_loop, copy_nid)
+    cx.graph:copy_outgoing_edges(is_happens_before, old_loop, copy_nid)
   else
     for field_path, new_nid in new_nids:items() do
       local opened_partition_nid = opened_partition_nids[field_path]
@@ -6114,7 +6078,7 @@ end
 
 local function merge_open_nids(cx)
   local function is_read_to_open(edge)
-    return edge.label:is(flow.edge.Read) and
+    return is_read(edge) and
       cx.graph:node_label(edge.to_node):is(flow.node.Open)
   end
   local function is_bad(nid, label)
@@ -6148,7 +6112,7 @@ end
 
 local function merge_close_nids(cx)
   local function is_write_from_close(edge)
-    return edge.label:is(flow.edge.Write) and
+    return is_write(edge) and
       cx.graph:node_label(edge.from_node):is(flow.node.Close)
   end
   local function is_bad(nid, label)
@@ -6393,12 +6357,8 @@ local function rewrite_inputs(cx, old_loop, new_loop,
   merge_close_nids(cx)
 
   -- Copy happens-before edges for the loop node itself.
-  cx.graph:copy_incoming_edges(
-    function(edge) return edge.label:is(flow.edge.HappensBefore) end,
-    old_loop, new_loop)
-  cx.graph:copy_outgoing_edges(
-    function(edge) return edge.label:is(flow.edge.HappensBefore) end,
-    old_loop, new_loop)
+  cx.graph:copy_incoming_edges(is_happens_before, old_loop, new_loop)
+  cx.graph:copy_outgoing_edges(is_happens_before, old_loop, new_loop)
 end
 
 local function compose_mapping(old, new)
