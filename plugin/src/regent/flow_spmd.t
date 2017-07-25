@@ -2423,10 +2423,6 @@ local function issue_intersection_copy_synchronization_forwards(
       std.list(std.phase_barrier, nil, nil, nil, nil, 1),
       nil, nil, nil, nil, 1)
 
-    local workaround = true
-    local full_in_bar_type = in_bar_type
-    if workaround then full_in_bar_type = bar_type end
-
     local empty_in_symbol = std.newsymbol(
       in_bar_type, "empty_in_" .. tostring(dst_label.value.value) .. "_" .. tostring(field_path))
     empty_in = make_variable_label(
@@ -2438,9 +2434,9 @@ local function issue_intersection_copy_synchronization_forwards(
       cx, empty_out_symbol, bar_type, dst_label.value.span)
 
     local full_in_symbol = std.newsymbol(
-      full_in_bar_type, "full_in_" .. tostring(dst_label.value.value) .. "_" .. tostring(field_path))
+      in_bar_type, "full_in_" .. tostring(dst_label.value.value) .. "_" .. tostring(field_path))
     full_in = make_variable_label(
-      cx, full_in_symbol, full_in_bar_type, dst_label.value.span)
+      cx, full_in_symbol, in_bar_type, dst_label.value.span)
 
     local full_out_symbol = std.newsymbol(
       bar_type, "full_out_" .. tostring(dst_label.value.value) .. "_" .. tostring(field_path))
