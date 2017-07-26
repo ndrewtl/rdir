@@ -440,7 +440,7 @@ local function can_spmdize(cx, loop)
 
   -- Currently, only apply SPMD when explicitly requested.
   if not has_demand then
-    local label = bad_graph:node_label(bad_nid)
+    local label = cx.graph:node_label(loop)
     if label:is(flow.node.Opaque) then label = label.action end
     report_fail(
       label,
