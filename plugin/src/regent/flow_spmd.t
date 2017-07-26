@@ -440,37 +440,47 @@ local function can_spmdize(cx, loop)
 
   -- Currently, only apply SPMD when explicitly requested.
   if not has_demand then
+    local label = bad_graph:node_label(bad_nid)
+    if label:is(flow.node.Opaque) then label = label.action end
     report_fail(
-      cx.graph:node_label(loop),
+      label,
       "unable to apply SPMD transformation: not requested")
     return false
   end
 
   local ok, bad_graph, bad_nid = whitelist_node_types(cx, loop)
   if not ok then
+    local label = bad_graph:node_label(bad_nid)
+    if label:is(flow.node.Opaque) then label = label.action end
     report_fail(
-      bad_graph:node_label(bad_nid),
+      label,
       "unable to apply SPMD transformation: block contains bad node types")
     return false
   end
 
   if not has_leaves(cx, loop) then
+    local label = cx.graph:node_label(loop)
+    if label:is(flow.node.Opaque) then label = label.action end
     report_fail(
-      cx.graph:node_label(loop),
+      label,
       "unable to apply SPMD transformation: block contains no recognizable leaf loops")
     return false
   end
 
   if not leaves_are_parallel_loops(cx, loop) then
+    local label = cx.graph:node_label(loop)
+    if label:is(flow.node.Opaque) then label = label.action end
     report_fail(
-      cx.graph:node_label(loop),
+      label,
       "unable to apply SPMD transformation: leaf loops are not parallelizable")
     return false
   end
 
   if not loops_are_compatible(cx, loop) then
+    local label = cx.graph:node_label(loop)
+    if label:is(flow.node.Opaque) then label = label.action end
     report_fail(
-      cx.graph:node_label(loop),
+      label,
       "unable to apply SPMD transformation: leaf loops use inconsistent bounds")
     return false
   end
