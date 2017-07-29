@@ -276,13 +276,18 @@ local function leaves_are_parallel_loops(cx, loop_nid)
   local loop_label = cx.graph:node_label(loop_nid)
   local block_cx = cx:new_graph_scope(loop_label.block)
 
-  return block_cx.graph:traverse_nodes_recursive(
+  local result = block_cx.graph:traverse_nodes_recursive(
     function(graph, nid, label)
       local inner_cx = block_cx:new_graph_scope(graph)
       if is_leaf(inner_cx, nid) then
-        return is_parallel_loop(inner_cx, nid) and nil
+        return not is_parallel_loop(inner_cx, nid) and {graph, nid} or nil
       end
-    end) == nil
+    end)
+  if result == nil then
+    return true
+  else
+    return false, unpack(result)
+  end
 end
 
 local function get_input(inputs, i, optional)
@@ -448,14 +453,16 @@ local function can_spmdize(cx, loop)
     return false
   end
 
-  local ok, bad_graph, bad_nid = whitelist_node_types(cx, loop)
-  if not ok then
-    local label = bad_graph:node_label(bad_nid)
-    if label:is(flow.node.Opaque) then label = label.action end
-    report_fail(
-      label,
-      "unable to apply SPMD transformation: block contains bad node types")
-    return false
+  do
+    local ok, bad_graph, bad_nid = whitelist_node_types(cx, loop)
+    if not ok then
+      local label = bad_graph:node_label(bad_nid)
+      if label:is(flow.node.Opaque) then label = label.action end
+      report_fail(
+        label,
+        "unable to apply SPMD transformation: block contains bad node types")
+      return false
+    end
   end
 
   if not has_leaves(cx, loop) then
@@ -467,13 +474,16 @@ local function can_spmdize(cx, loop)
     return false
   end
 
-  if not leaves_are_parallel_loops(cx, loop) then
-    local label = cx.graph:node_label(loop)
-    if label:is(flow.node.Opaque) then label = label.action end
-    report_fail(
-      label,
-      "unable to apply SPMD transformation: leaf loops are not parallelizable")
-    return false
+  do
+    local ok, bad_graph, bad_nid = leaves_are_parallel_loops(cx, loop)
+    if not ok then
+      local label = bad_graph:node_label(bad_nid)
+      if label:is(flow.node.Opaque) then label = label.action end
+      report_fail(
+        label,
+        "unable to apply SPMD transformation: leaf loop is not parallelizable")
+      return false
+    end
   end
 
   if not loops_are_compatible(cx, loop) then
