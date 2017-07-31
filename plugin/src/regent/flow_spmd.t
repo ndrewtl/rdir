@@ -2054,8 +2054,9 @@ local function issue_barrier_adjust(cx, barrier_nid, delta)
   end
 
   local adjust_label = flow.node.Opaque {
-    action = ast.typed.stat.Expr {
-      expr = ast.typed.expr.Adjust {
+    action = ast.typed.stat.Assignment {
+      lhs = barrier_label.value,
+      rhs = ast.typed.expr.Adjust {
         barrier = barrier_label.value,
         value = delta_label,
         expr_type = barrier_label.value.expr_type,
