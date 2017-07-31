@@ -2055,14 +2055,16 @@ local function issue_barrier_adjust(cx, barrier_nid, delta)
 
   local adjust_label = flow.node.Opaque {
     action = ast.typed.stat.Assignment {
-      lhs = barrier_label.value,
-      rhs = ast.typed.expr.Adjust {
-        barrier = barrier_label.value,
-        value = delta_label,
-        expr_type = barrier_label.value.expr_type,
-        annotations = ast.default_annotations(),
-        span = barrier_label.value.span,
-      },
+      lhs = terralib.newlist({barrier_label.value}),
+      rhs = terralib.newlist({
+        ast.typed.expr.Adjust {
+          barrier = barrier_label.value,
+          value = delta_label,
+          expr_type = barrier_label.value.expr_type,
+          annotations = ast.default_annotations(),
+          span = barrier_label.value.span,
+        }
+      }),
       annotations = ast.default_annotations(),
       span = barrier_label.value.span,
     }
