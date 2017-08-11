@@ -370,12 +370,14 @@ function graph:any_nodes(fn)
     function(node, label) return fn(node, label) or nil end) or false
 end
 
-function graph:traverse_nodes_recursive(fn)
+function graph:traverse_nodes_recursive(fn, continue_recursion)
   for node, label in pairs(self.nodes) do
-    for k, v in pairs(label) do
-      if flow.is_graph(v) then
-        local result = {v:traverse_nodes_recursive(fn)}
-        if result[1] ~= nil then return unpack(result) end
+    if not continue_recursion or continue_recursion(self, node, label) then
+      for k, v in pairs(label) do
+        if flow.is_graph(v) then
+          local result = {v:traverse_nodes_recursive(fn, continue_recursion)}
+          if result[1] ~= nil then return unpack(result) end
+        end
       end
     end
     local result = {fn(self, node, label)}

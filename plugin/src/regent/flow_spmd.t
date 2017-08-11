@@ -180,6 +180,60 @@ local function has_leaves(cx, loop_nid)
     end)
 end
 
+local function is_task(cx, nid)
+  local label = cx.graph:node_label(nid)
+  return label:is(flow.node.Task)
+end
+
+local function task_has_privileges(cx, nid)
+  -- Edges that are ok:
+  --   * Happens-before
+  --   * None
+  --   * Reads on scalars, constants, or functions
+  --   * Writes to fresh scalars
+  -- Everything else is bad.
+
+  local function is_bad_edge(edge)
+    if edge.label:is(flow.edge.Read) then
+      local label = cx.graph:node_label(edge.from_node)
+      return not (label:is(flow.node.data.Scalar) or
+                    label:is(flow.node.Constant) or
+                    label:is(flow.node.Function))
+    end
+    if edge.label:is(flow.edge.Write) then
+      local label = cx.graph:node_label(edge.to_node)
+      return not (label:is(flow.node.data.Scalar) and label.fresh)
+    end
+    return not (edge.label:is(flow.edge.HappensBefore) or
+                  edge.label:is(flow.edge.None))
+  end
+
+  return #cx.graph:filter_immediate_predecessors_by_edges(is_bad_edge, nid) > 0 or
+    #cx.graph:filter_immediate_successors_by_edges(is_bad_edge, nid) > 0
+end
+
+local function nonleaf_tasks_no_privileges(cx, loop_nid)
+  local loop_label = cx.graph:node_label(loop_nid)
+  local block_cx = cx:new_graph_scope(loop_label.block)
+
+  local result = block_cx.graph:traverse_nodes_recursive(
+    function(graph, nid, label)
+      local inner_cx = block_cx:new_graph_scope(graph)
+      if is_task(inner_cx, nid) then
+        return task_has_privileges(inner_cx, nid) and {graph, nid} or nil
+      end
+    end,
+    function(graph, nid, label)
+      local inner_cx = block_cx:new_graph_scope(graph)
+      return not is_leaf(inner_cx, nid)
+    end)
+  if result == nil then
+    return true
+  else
+    return false, unpack(result)
+  end
+end
+
 local function filter_join(list1, list2, fn)
   local result = terralib.newlist()
   for _, elt1 in ipairs(list1) do
@@ -435,6 +489,7 @@ local function can_spmdize(cx, loop)
   --      b. Open and close ops
   --      c. Data nodes (regions, partitions, scalars) of any kinds
   --      d. Any variables updated must be updated uniformly (not checked yet)
+  --  4. Tasks outside of loops do not request privileges on regions.
 
   local has_demand = has_demand_spmd(cx, loop)
 
@@ -443,10 +498,14 @@ local function can_spmdize(cx, loop)
     report_fail = report.error
   end
 
+  local function fixup_label(label)
+    if label:is(flow.node.Opaque) then return label.action end
+    return label
+  end
+
   -- Currently, only apply SPMD when explicitly requested.
   if not has_demand then
-    local label = cx.graph:node_label(loop)
-    if label:is(flow.node.Opaque) then label = label.action end
+    local label = fixup_label(cx.graph:node_label(loop))
     report_fail(
       label,
       "unable to apply SPMD transformation: not requested")
@@ -456,8 +515,7 @@ local function can_spmdize(cx, loop)
   do
     local ok, bad_graph, bad_nid = whitelist_node_types(cx, loop)
     if not ok then
-      local label = bad_graph:node_label(bad_nid)
-      if label:is(flow.node.Opaque) then label = label.action end
+      local label = fixup_label(bad_graph:node_label(bad_nid))
       report_fail(
         label,
         "unable to apply SPMD transformation: block contains bad node types")
@@ -465,9 +523,19 @@ local function can_spmdize(cx, loop)
     end
   end
 
+  do
+    local ok, bad_graph, bad_nid = nonleaf_tasks_no_privileges(cx, loop)
+    if not ok then
+      local label = fixup_label(bad_graph:node_label(bad_nid))
+      report_fail(
+        label,
+        "unable to apply SPMD transformation: a task outside of a leaf loop requests privileges on a region")
+      return false
+    end
+  end
+
   if not has_leaves(cx, loop) then
-    local label = cx.graph:node_label(loop)
-    if label:is(flow.node.Opaque) then label = label.action end
+    local label = fixup_label(cx.graph:node_label(loop))
     report_fail(
       label,
       "unable to apply SPMD transformation: block contains no recognizable leaf loops")
@@ -477,8 +545,7 @@ local function can_spmdize(cx, loop)
   do
     local ok, bad_graph, bad_nid = leaves_are_parallel_loops(cx, loop)
     if not ok then
-      local label = bad_graph:node_label(bad_nid)
-      if label:is(flow.node.Opaque) then label = label.action end
+      local label = fixup_label(bad_graph:node_label(bad_nid))
       report_fail(
         label,
         "unable to apply SPMD transformation: leaf loop is not parallelizable")
@@ -487,8 +554,7 @@ local function can_spmdize(cx, loop)
   end
 
   if not loops_are_compatible(cx, loop) then
-    local label = cx.graph:node_label(loop)
-    if label:is(flow.node.Opaque) then label = label.action end
+    local label = fixup_label(cx.graph:node_label(loop))
     report_fail(
       label,
       "unable to apply SPMD transformation: leaf loops use inconsistent bounds")
