@@ -2490,7 +2490,8 @@ end
 --       * vn1 is beyond the existing last occurance (phase n+1)
 
 local function issue_intersection_copy_synchronization_forwards(
-    cx, dst_in_nid, dst_out_nid, copy_nid, barriers, inner_sync_points)
+    cx, src_nid, dst_in_nid, dst_out_nid, copy_nid, barriers, inner_sync_points)
+  local src_label = cx.graph:node_label(src_nid)
   local dst_label = cx.graph:node_label(dst_in_nid)
   local dst_type = dst_label.region_type
   local field_path = dst_label.field_path
@@ -2508,23 +2509,21 @@ local function issue_intersection_copy_synchronization_forwards(
       std.list(std.phase_barrier, nil, nil, nil, nil, 1),
       nil, nil, nil, nil, 1)
 
-    local empty_in_symbol = std.newsymbol(
-      in_bar_type, "empty_in_" .. tostring(dst_label.value.value) .. "_" .. tostring(field_path))
+    local suffix = tostring(src_label.value.value) .. "_" .. tostring(dst_label.value.value) .. "_" .. tostring(field_path)
+
+    local empty_in_symbol = std.newsymbol(in_bar_type, "empty_in_" .. suffix)
     empty_in = make_variable_label(
       cx, empty_in_symbol, in_bar_type, dst_label.value.span)
 
-    local empty_out_symbol = std.newsymbol(
-      bar_type, "empty_out_" .. tostring(dst_label.value.value) .. "_" .. tostring(field_path))
+    local empty_out_symbol = std.newsymbol(bar_type, "empty_out_" .. suffix)
     empty_out = make_variable_label(
       cx, empty_out_symbol, bar_type, dst_label.value.span)
 
-    local full_in_symbol = std.newsymbol(
-      in_bar_type, "full_in_" .. tostring(dst_label.value.value) .. "_" .. tostring(field_path))
+    local full_in_symbol = std.newsymbol(in_bar_type, "full_in_" .. suffix)
     full_in = make_variable_label(
       cx, full_in_symbol, in_bar_type, dst_label.value.span)
 
-    local full_out_symbol = std.newsymbol(
-      bar_type, "full_out_" .. tostring(dst_label.value.value) .. "_" .. tostring(field_path))
+    local full_out_symbol = std.newsymbol(bar_type, "full_out_" .. suffix)
     full_out = make_variable_label(
       cx, full_out_symbol, bar_type, dst_label.value.span)
 
@@ -2590,7 +2589,7 @@ local function issue_intersection_copy_synchronization_forwards(
 end
 
 local function issue_intersection_copy_synchronization_backwards(
-    cx, dst_in_nid, dst_out_nid, copy_nid, barriers)
+    cx, src_nid, dst_in_nid, dst_out_nid, copy_nid, barriers)
   local dst_label = cx.graph:node_label(dst_in_nid)
   local dst_type = dst_label.region_type
   local field_path = dst_label.field_path
@@ -2729,7 +2728,7 @@ local function rewrite_copies_subgraph(cx, loop_nid, inverse_mapping, intersecti
           copy_nid = issue_intersection_copy(
             block_cx, src_nid, dst_in_nid, dst_out_nid, op, intersections)
           sync[copy_nid] = data.newtuple(
-            dst_in_nid, dst_out_nid, src_type,
+            src_nid, dst_in_nid, dst_out_nid, src_type,
             dst_label.region_type, dst_label.field_path)
         end
 
@@ -2822,9 +2821,9 @@ local function rewrite_synchronization_forwards_subgraph(cx, loop_nid, sync, bar
   local used_forwards = data.new_recursive_map(2)
   for _, nid in ipairs(block_cx.graph:toposort()) do
     if sync[nid] then
-      local dst_in_nid, dst_out_nid, src_type, dst_type, field_path = unpack(sync[nid])
+      local src_nid, dst_in_nid, dst_out_nid, src_type, dst_type, field_path = unpack(sync[nid])
       issue_intersection_copy_synchronization_forwards(
-        block_cx, dst_in_nid, dst_out_nid, nid, barriers[src_type], inner_sync_points)
+        block_cx, src_nid, dst_in_nid, dst_out_nid, nid, barriers[src_type], inner_sync_points)
     elseif is_inner(block_cx, nid) then
       raise_barriers_forwards(block_cx, nid, barriers)
     end
@@ -2838,9 +2837,9 @@ local function rewrite_synchronization_backwards_subgraph(cx, loop_nid, sync, ba
   local used_backwards = data.new_recursive_map(2)
   for _, nid in ipairs(block_cx.graph:inverse_toposort()) do
     if sync[nid] then
-    local dst_in_nid, dst_out_nid, src_type, dst_type, field_path = unpack(sync[nid])
+    local src_nid, dst_in_nid, dst_out_nid, src_type, dst_type, field_path = unpack(sync[nid])
     issue_intersection_copy_synchronization_backwards(
-      block_cx, dst_in_nid, dst_out_nid, nid, barriers[src_type])
+      block_cx, src_nid, dst_in_nid, dst_out_nid, nid, barriers[src_type])
     elseif is_inner(block_cx, nid) then
       raise_barriers_backwards(block_cx, nid, barriers)
     end
