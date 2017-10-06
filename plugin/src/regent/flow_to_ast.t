@@ -278,11 +278,9 @@ function flow_to_ast.node_opaque(cx, nid)
       then
         actions:insert(
           ast.typed.stat.Var {
-            symbols = terralib.newlist({ input_label.value.value }),
-            types = terralib.newlist({ std.as_read(input_label.value.expr_type) }),
-            values = terralib.newlist({
-                cx.ast[input_nid],
-            }),
+            symbol = input_label.value.value,
+            type = std.as_read(input_label.value.expr_type),
+            value = cx.ast[input_nid],
             annotations = input_label.value.annotations,
             span = input_label.value.span,
         })
@@ -292,9 +290,9 @@ function flow_to_ast.node_opaque(cx, nid)
         local region_ast = cx.region_ast[input_label.region_type]
         assert(region_ast)
         local action = ast.typed.stat.Var {
-          symbols = terralib.newlist({ input_label.value.value }),
-          types = terralib.newlist({ std.as_read(region_ast.expr_type) }),
-          values = terralib.newlist({ region_ast }),
+          symbol = input_label.value.value,
+          type = std.as_read(region_ast.expr_type),
+          value = region_ast,
           annotations = region_ast.annotations,
           span = region_ast.span,
         }
@@ -360,8 +358,8 @@ function make_expr_result(cx, nid, action)
   else
     return terralib.newlist({
         ast.typed.stat.Assignment {
-          lhs = terralib.newlist({result_label.value}),
-          rhs = terralib.newlist({action}),
+          lhs = result_label.value,
+          rhs = action,
           annotations = action.annotations,
           span = action.span,
         },
@@ -476,13 +474,16 @@ function flow_to_ast.node_assignment(cx, nid)
     rhs:insert(cx.ast[inputs[i][1].from_node])
   end
 
-  local action = ast.typed.stat.Assignment {
-    lhs = lhs,
-    rhs = rhs,
-    annotations = label.annotations,
-    span = label.span,
-  }
-  return terralib.newlist({action})
+  local actions = data.zip(lhs, rhs):map(function(pair)
+    local lh, rh = unpack(pair)
+    return ast.typed.stat.Assignment {
+      lhs = lh,
+      rhs = rh,
+      annotations = label.annotations,
+      span = label.span,
+    }
+  end)
+  return actions
 end
 
 function flow_to_ast.node_reduce(cx, nid)
@@ -505,14 +506,17 @@ function flow_to_ast.node_reduce(cx, nid)
     rhs:insert(cx.ast[inputs[i][1].from_node])
   end
 
-  local action = ast.typed.stat.Reduce {
-    lhs = lhs,
-    rhs = rhs,
-    op = label.op,
-    annotations = label.annotations,
-    span = label.span,
-  }
-  return terralib.newlist({action})
+  local actions = data.zip(lhs, rhs):map(function(pair)
+    local lh, rh = unpack(pair)
+    return ast.typed.stat.Reduce {
+      lhs = lh,
+      rhs = rh,
+      op = label.op,
+      annotations = label.annotations,
+      span = label.span,
+    }
+  end)
+  return actions
 end
 
 function flow_to_ast.node_task(cx, nid)
@@ -621,11 +625,9 @@ function flow_to_ast.node_task(cx, nid)
         cx.ast[nid] = result.value
         return terralib.newlist({
           ast.typed.stat.Var {
-            symbols = terralib.newlist({ result.value.value }),
-            types = terralib.newlist({ result.value.expr_type }),
-            values = terralib.newlist({
-                action
-            }),
+            symbol = result.value.value,
+            type = result.value.expr_type,
+            value = action,
             annotations = action.annotations,
             span = action.span,
           }
@@ -938,11 +940,11 @@ function flow_to_ast.node_while_loop(cx, nid)
   elseif #stats == 2 then
     -- FIXME: This hack is necessary because certain node types
     -- (e.g. task calls) do not coalesce into expressions properly.
-    if stats[1]:is(ast.typed.stat.Var) and #(stats[1].symbols) == 1 and
+    if stats[1]:is(ast.typed.stat.Var) and
       stats[2]:is(ast.typed.stat.While) and stats[2].cond:is(ast.typed.expr.ID) and
-      stats[2].cond.value == stats[1].symbols[1]
+      stats[2].cond.value == stats[1].symbol
     then
-      return terralib.newlist({stats[2] { cond = stats[1].values[1] }})
+      return terralib.newlist({stats[2] { cond = stats[1].value }})
     end
   end
   assert(false)
@@ -1054,9 +1056,9 @@ function flow_to_ast.node_data(cx, nid)
         cx.ast[nid] = label.value
         return terralib.newlist({
             ast.typed.stat.Var {
-              symbols = terralib.newlist({label.value.value}),
-              types = terralib.newlist({std.as_read(label.value.expr_type)}),
-              values = terralib.newlist({cx.ast[inputs[0][1].from_node]}),
+              symbol = label.value.value,
+              type = std.as_read(label.value.expr_type),
+              value = cx.ast[inputs[0][1].from_node],
               annotations = ast.default_annotations(),
               span = label.value.span,
         }})

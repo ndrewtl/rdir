@@ -583,8 +583,8 @@ local function add_result(cx, original_nid, call_nid, return_type)
 
     local assign_label = flow.node.Opaque {
       action = ast.typed.stat.Assignment {
-        lhs = terralib.newlist({output_label.value}),
-        rhs = terralib.newlist({tmp_label.value}),
+        lhs = output_label.value,
+        rhs = tmp_label.value,
         annotations = ast.default_annotations(),
         span = output_label.value.span,
       }

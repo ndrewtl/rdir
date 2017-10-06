@@ -644,10 +644,8 @@ local analyze_regions = {}
 function analyze_regions.vars(cx)
   return function(node)
     if node:is(ast.typed.stat.Var) then
-      for i, var_symbol in ipairs(node.symbols) do
-        local var_type = std.rawref(&node.types[i])
-        cx.tree:intern_variable(var_type, var_symbol, node.annotations, node.span)
-      end
+      local var_type = std.rawref(&node.type)
+      cx.tree:intern_variable(var_type, node.symbol, node.annotations, node.span)
     elseif node:is(ast.typed.stat.VarUnpack) then
       for i, var_symbol in ipairs(node.symbols) do
         local var_type = std.rawref(&node.field_types[i])
@@ -2007,21 +2005,15 @@ function analyze_privileges.stat_block(cx, node)
 end
 
 function analyze_privileges.stat_var(cx, node)
-  for i, var_symbol in ipairs(node.symbols) do
-    local var_type = std.rawref(&node.types[i])
-    if not flow_region_tree.is_region(std.as_read(var_type)) or
-      not cx:has_region_symbol(std.as_read(var_type))
-    then
-      cx:intern_region(node, var_symbol, var_type)
-    end
+  local var_type = std.rawref(&node.type)
+  if not flow_region_tree.is_region(std.as_read(var_type)) or
+    not cx:has_region_symbol(std.as_read(var_type))
+  then
+    cx:intern_region(node, node.symbol, var_type)
   end
 
-  return data.reduce(
-    privilege_meet,
-    node.values:map(
-      function(value)
-        return analyze_privileges.expr(cx, value, name(value.expr_type)) or new_field_map()
-      end))
+  return node.value and analyze_privileges.expr(cx, node.value, name(node.value.expr_type)) or
+         new_field_map()
 end
 
 function analyze_privileges.stat_var_unpack(cx, node)
@@ -2043,36 +2035,17 @@ end
 
 function analyze_privileges.stat_assignment(cx, node)
   return
-    data.reduce(
-      privilege_meet,
-      node.lhs:map(
-        function(lh)
-          return analyze_privileges.expr(cx, lh, reads_writes)
-            or new_field_map()
-        end),
-      data.reduce(
-        privilege_meet,
-        node.rhs:map(
-          function(rh)
-            return analyze_privileges.expr(cx, rh, reads) or new_field_map()
-          end)))
+    privilege_meet(
+      analyze_privileges.expr(cx, node.lhs, reads_writes) or new_field_map(),
+      analyze_privileges.expr(cx, node.rhs, reads) or new_field_map())
 end
 
 function analyze_privileges.stat_reduce(cx, node)
   local op = get_trivial_field_map(reduces(node.op))
   return
-    data.reduce(
-      privilege_meet,
-      node.lhs:map(
-        function(lh)
-          return analyze_privileges.expr(cx, lh, op) or new_field_map()
-        end),
-      data.reduce(
-        privilege_meet,
-        node.rhs:map(
-          function(rh)
-            return analyze_privileges.expr(cx, rh, reads) or new_field_map()
-          end)))
+    privilege_meet(
+      analyze_privileges.expr(cx, node.lhs, op) or new_field_map(),
+      analyze_privileges.expr(cx, node.rhs, reads) or new_field_map())
 end
 
 function analyze_privileges.stat_expr(cx, node)
@@ -3294,10 +3267,7 @@ end
 
 function flow_from_ast.stat_var(cx, node)
   -- FIXME: Workaround for bug in inline optimization.
-  if data.all(
-    unpack(node.types:map(
-      function(type) return type == terralib.types.unit end)))
-  then
+  if node.type == terralib.types.unit then
     return
   end
 
@@ -3317,35 +3287,29 @@ function flow_from_ast.stat_break(cx, node)
 end
 
 function flow_from_ast.stat_assignment(cx, node)
-  if not data.all(
-    unpack(node.lhs:map(function(lh) return lh:is(ast.typed.expr.ID) end)))
-  then
+  if not node.lhs:is(ast.typed.expr.ID) then
     as_opaque_stat(cx, node)
     return
   end
 
-  local rhs = node.rhs:map(
-    function(rh) return flow_from_ast.expr(cx, rh, reads) end)
-  local lhs = node.lhs:map(
-    function(lh) return flow_from_ast.expr(cx, lh, reads_writes) end)
+  local rhs = flow_from_ast.expr(cx, node.rhs, reads)
+  local lhs = flow_from_ast.expr(cx, node.lhs, reads_writes)
 
   local inputs = terralib.newlist()
-  inputs:insertall(lhs)
-  inputs:insertall(rhs)
+  inputs:insert(lhs)
+  inputs:insert(rhs)
 
   as_assignment_stat(cx, inputs, node.annotations, node.span)
 end
 
 function flow_from_ast.stat_reduce(cx, node)
   local op = get_trivial_field_map(reduces(node.op))
-  local rhs = node.rhs:map(
-    function(rh) return flow_from_ast.expr(cx, rh, reads) end)
-  local lhs = node.lhs:map(
-    function(lh) return flow_from_ast.expr(cx, lh, op) end)
+  local rhs = flow_from_ast.expr(cx, node.rhs, reads)
+  local lhs = flow_from_ast.expr(cx, node.lhs, op)
 
   local inputs = terralib.newlist()
-  inputs:insertall(lhs)
-  inputs:insertall(rhs)
+  inputs:insert(lhs)
+  inputs:insert(rhs)
 
   as_reduce_stat(cx, node.op, inputs, node.annotations, node.span)
 end
