@@ -933,6 +933,13 @@ function flow_to_ast.node_while_loop(cx, nid)
   local label = cx.graph:node_label(nid)
   local block_cx = cx:new_block_scope(label)
   local stats = flow_to_ast.graph(block_cx, label.block).stats
+  stats = stats:map(function(stat)
+    if stat:is(ast.typed.stat.While) then
+      return stat { annotations = label.annotations }
+    else
+      return stat
+    end
+  end)
   if #stats == 1 then
     return stats
   elseif #stats == 2 then
