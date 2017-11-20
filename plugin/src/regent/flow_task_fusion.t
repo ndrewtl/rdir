@@ -395,6 +395,7 @@ local function fuse_tasks(params1_mapping, params2_mapping, mapping, fn1, fn2)
       leaf = false,
       inner = false,
       idempotent = false,
+      replicable = false,
     },
     region_divergence = false,
     prototype = prototype,
