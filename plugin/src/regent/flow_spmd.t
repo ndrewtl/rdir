@@ -1530,7 +1530,7 @@ local function rewrite_shard_partitions(cx)
             std.newsymbol(std.ispace(region_type:ispace().index_type)),
             region_type:fspace()),
           value_type)
-        for other_region, _ in pairs(cx.tree.region_universe) do
+        for other_region, _ in cx.tree.region_universe:items() do
           assert(not std.type_eq(expr_type, other_region))
           -- Only record explicit disjointness when there is possible
           -- type-based aliasing.
@@ -4336,7 +4336,7 @@ local function get_slice_type_and_symbol(cx, region_type, list_type, label)
     std.is_list_of_partitions(region_type)
   then
     local parent_list_type = list_type:slice()
-    for other_region, _ in pairs(cx.tree.region_universe) do
+    for other_region, _ in cx.tree.region_universe:items() do
       assert(not std.type_eq(parent_list_type, other_region))
       if not std.type_eq(other_region, list_type) and
         std.type_maybe_eq(parent_list_type:fspace(), other_region:fspace())

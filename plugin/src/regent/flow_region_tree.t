@@ -48,10 +48,7 @@ region_tree.__index = region_tree
 
 function flow_region_tree.new_region_tree(constraints, region_universe)
   -- Copy region_universe to allow safe modifications.
-  local initial_universe = {}
-  for k, v in pairs(region_universe) do
-    initial_universe[k] = v
-  end
+  local initial_universe = region_universe:copy()
   return setmetatable({
       -- Region tree structure.
       constraints = constraints,
@@ -154,7 +151,7 @@ function region_tree:intern_variable(expr_type, symbol, annotations, span)
     end
 
     region_type = std.region(terralib.types.unit)
-    for other, _ in pairs(self.region_universe) do
+    for other, _ in self.region_universe:items() do
       std.add_constraint(self, region_type, other, std.disjointness, true)
     end
     self.interned_scalars[symbol] = region_type
@@ -341,7 +338,7 @@ function region_tree:siblings(region_type)
   assert(flow_region_tree.is_region(region_type))
 
   local siblings = terralib.newlist()
-  for other, _ in pairs(self.region_universe) do
+  for other, _ in self.region_universe:items() do
     if self:is_sibling(region_type, other) then
       siblings:insert(other)
     end
