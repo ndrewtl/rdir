@@ -225,8 +225,8 @@ local function search_constraint_paths(constraints, region_type, path, visited,
   visited[region_type] = true
 
   path:insert(region_type)
-  if rawget(constraints, std.subregion) and rawget(constraints[std.subregion], region_type) then
-    for parent, _ in pairs(constraints[std.subregion][region_type]) do
+  if constraints:has(std.subregion) and constraints[std.subregion]:has(region_type) then
+    for parent, _ in constraints[std.subregion][region_type]:items() do
       local result = search_constraint_paths(
         constraints, parent, path, visited, predicate)
       if result then
@@ -293,10 +293,10 @@ end
 
 function region_tree:parent(region_type)
   assert(flow_region_tree.is_region(region_type))
-  if rawget(self.constraints, std.subregion) and
-    rawget(self.constraints[std.subregion], region_type)
+  if self.constraints:has(std.subregion) and
+    self.constraints[std.subregion]:has(region_type)
   then
-    for parent, _ in pairs(self.constraints[std.subregion][region_type]) do
+    for parent, _ in self.constraints[std.subregion][region_type]:items() do
       return parent
     end
   end
@@ -306,9 +306,9 @@ function region_tree:children(region_type)
   assert(flow_region_tree.is_region(region_type))
 
   local result = terralib.newlist()
-  if rawget(self.constraints, std.subregion) then
-    for other, parents in pairs(self.constraints[std.subregion]) do
-      for parent, _ in pairs(parents) do
+  if self.constraints:has(std.subregion) then
+    for other, parents in self.constraints[std.subregion]:items() do
+      for parent, _ in parents:items() do
         if parent == region_type then
           result:insert(other)
           break
