@@ -39,7 +39,6 @@ local data = require("common/data")
 local flow = require("regent/flow")
 local flow_extract_subgraph = require("regent/flow_extract_subgraph")
 local flow_to_ast = require("regent/flow_to_ast")
-local licm_scratch_fields = require("regent/licm_scratch_fields")
 local optimize_config_options = require("regent/optimize_config_options")
 local optimize_copies = require("regent/optimize_copies")
 local optimize_divergence = require("regent/optimize_divergence")
@@ -444,7 +443,6 @@ local function extract_task(cx, nid, prefix, force_read_write)
   if std.config["leaf"] or std.config["inner"] then ast = optimize_config_options.entry(ast) end
   print("FIXME: Mapping optimization disabled while outlining task")
   -- if std.config["mapping"] then ast = optimize_mapping.entry(ast) end
-  if std.config["licm-scratch-fields"] then ast = licm_scratch_fields.entry(ast) end
   if std.config["trace"] then ast = optimize_traces.entry(ast) end
   if std.config["no-dynamic-branches"] then ast = optimize_divergence.entry(ast) end
   if std.config["vectorize"] then ast = vectorize_loops.entry(ast) end
