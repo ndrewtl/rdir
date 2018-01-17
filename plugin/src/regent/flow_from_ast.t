@@ -2016,6 +2016,9 @@ function analyze_privileges.stat(cx, node)
   elseif node:is(ast.typed.stat.RawDelete) then
     return analyze_privileges.stat_raw_delete(cx, node)
 
+  elseif node:is(ast.typed.stat.Fence) then
+    return nil
+
   else
     assert(false, "unexpected node type " .. tostring(node:type()))
   end
@@ -3244,6 +3247,10 @@ function flow_from_ast.stat_raw_delete(cx, node)
   as_opaque_stat(cx, node)
 end
 
+function flow_from_ast.stat_fence(cx, node)
+  as_opaque_stat(cx, node)
+end
+
 function flow_from_ast.stat(cx, node)
   if node:is(ast.typed.stat.If) then
     flow_from_ast.stat_if(cx, node)
@@ -3289,6 +3296,9 @@ function flow_from_ast.stat(cx, node)
 
   elseif node:is(ast.typed.stat.RawDelete) then
     flow_from_ast.stat_raw_delete(cx, node)
+
+  elseif node:is(ast.typed.stat.Fence) then
+    flow_from_ast.stat_fence(cx, node)
 
   else
     assert(false, "unexpected node type " .. tostring(node:type()))
