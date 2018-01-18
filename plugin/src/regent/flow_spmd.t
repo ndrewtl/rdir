@@ -1,4 +1,4 @@
--- Copyright (c) 2015-2017, Stanford University. All rights reserved.
+-- Copyright (c) 2015-2018, Stanford University. All rights reserved.
 --
 -- This file is dual-licensed under the BSD license (shown below) and
 -- Apache version 2.0 license.
@@ -1530,7 +1530,7 @@ local function rewrite_shard_partitions(cx)
             std.newsymbol(std.ispace(region_type:ispace().index_type)),
             region_type:fspace()),
           value_type)
-        for other_region, _ in pairs(cx.tree.region_universe) do
+        for other_region, _ in cx.tree.region_universe:items() do
           assert(not std.type_eq(expr_type, other_region))
           -- Only record explicit disjointness when there is possible
           -- type-based aliasing.
@@ -1701,9 +1701,9 @@ local function issue_with_scratch_fields(cx, op, reduction_nids, other_nids,
 
   name_label = flow.node.Opaque {
     action = ast.typed.stat.Var {
-      symbols = terralib.newlist({new_symbol}),
-      types = terralib.newlist({new_type}),
-      values = terralib.newlist({name_label}),
+      symbol = new_symbol,
+      type = new_type,
+      value = name_label,
       annotations = ast.default_annotations(),
       span = old_label.value.span,
     }
@@ -1829,22 +1829,20 @@ local function issue_allocate_scratch_fields(cx, shard_loop, scratch_fields)
       local region_label = cx.graph:node_label(region_nid)
       local create_label = flow.node.Opaque {
         action = ast.typed.stat.Var {
-          symbols = terralib.newlist({fid_label.value.value}),
-          types = terralib.newlist({std.as_read(fid_label.value.expr_type)}),
-          values = terralib.newlist({
-              ast.typed.expr.AllocateScratchFields {
-                region = ast.typed.expr.RegionRoot {
-                  region = region_label.value,
-                  fields = terralib.newlist({field_path}),
-                  expr_type = region_label.value.expr_type,
-                  annotations = ast.default_annotations(),
-                  span = region_label.value.span,
-                },
-                expr_type = std.as_read(fid_label.value.expr_type),
-                annotations = ast.default_annotations(),
-                span = fid_label.value.span,
-              },
-          }),
+          symbol = fid_label.value.value,
+          type = std.as_read(fid_label.value.expr_type),
+          value = ast.typed.expr.AllocateScratchFields {
+            region = ast.typed.expr.RegionRoot {
+              region = region_label.value,
+              fields = terralib.newlist({field_path}),
+              expr_type = region_label.value.expr_type,
+              annotations = ast.default_annotations(),
+              span = region_label.value.span,
+            },
+            expr_type = std.as_read(fid_label.value.expr_type),
+            annotations = ast.default_annotations(),
+            span = fid_label.value.span,
+          },
           annotations = ast.default_annotations(),
           span = fid_label.value.span,
         },
@@ -2121,16 +2119,14 @@ local function issue_barrier_adjust(cx, barrier_nid, delta)
 
   local adjust_label = flow.node.Opaque {
     action = ast.typed.stat.Assignment {
-      lhs = terralib.newlist({barrier_label.value}),
-      rhs = terralib.newlist({
-        ast.typed.expr.Adjust {
-          barrier = barrier_label.value,
-          value = delta_label,
-          expr_type = barrier_label.value.expr_type,
-          annotations = ast.default_annotations(),
-          span = barrier_label.value.span,
-        }
-      }),
+      lhs = barrier_label.value,
+      rhs = ast.typed.expr.Adjust {
+        barrier = barrier_label.value,
+        value = delta_label,
+        expr_type = barrier_label.value.expr_type,
+        annotations = ast.default_annotations(),
+        span = barrier_label.value.span,
+      },
       annotations = ast.default_annotations(),
       span = barrier_label.value.span,
     }
@@ -2359,16 +2355,14 @@ local function issue_barrier_await_blocking(cx, bar_nid, use_nid, after_nid, inn
 
     local def_label = flow.node.Opaque {
       action = ast.typed.stat.Var {
-        symbols = terralib.newlist({var_symbol}),
-        values = terralib.newlist({
-            ast.typed.expr.Constant {
-              value = 0,
-              expr_type = var_type,
-              annotations = ast.default_annotations(),
-              span = use_label.span,
-            }
-        }),
-        types = terralib.newlist({var_type}),
+        symbol = var_symbol,
+        value = ast.typed.expr.Constant {
+          value = 0,
+          expr_type = var_type,
+          annotations = ast.default_annotations(),
+          span = use_label.span,
+        },
+        type = var_type,
         annotations = ast.default_annotations(),
         span = use_label.span,
       }
@@ -3234,18 +3228,16 @@ local function issue_local_collective_creation(cx, loop_nid, collective_nid, op,
 
   local create_label = flow.node.Opaque {
     action = ast.typed.stat.Var {
-      symbols = terralib.newlist({collective.value.value}),
-      types = terralib.newlist({collective_type}),
-      values = terralib.newlist({
-          ast.typed.expr.DynamicCollective {
-            arrivals = nparts.value,
-            op = op,
-            value_type = value_type,
-            expr_type = collective_type,
-            annotations = ast.default_annotations(),
-            span = collective.value.span,
-          },
-      }),
+      symbol = collective.value.value,
+      type = collective_type,
+      value = ast.typed.expr.DynamicCollective {
+        arrivals = nparts.value,
+        op = op,
+        value_type = value_type,
+        expr_type = collective_type,
+        annotations = ast.default_annotations(),
+        span = collective.value.span,
+      },
       annotations = ast.default_annotations(),
       span = collective.value.span,
     }
@@ -3310,20 +3302,18 @@ local function rewrite_shard_intersections(cx, shard_loop, intersections)
 
       local complete_label = flow.node.Opaque {
         action = ast.typed.stat.Var {
-          symbols = terralib.newlist({intersection_label.value.value}),
-          types = terralib.newlist({intersection_label.region_type}),
-          values = terralib.newlist({
-              ast.typed.expr.ListCrossProductComplete {
-                lhs = lhs_label.value,
-                product = intersection_label.value {
-                  value = shallow_symbol,
-                  expr_type = std.type_sub(intersection_label.value.expr_type, mapping),
-                },
-                expr_type = intersection_type,
-                annotations = ast.default_annotations(),
-                span = intersection_label.value.span,
-              },
-          }),
+          symbol = intersection_label.value.value,
+          type = intersection_label.region_type,
+          value = ast.typed.expr.ListCrossProductComplete {
+            lhs = lhs_label.value,
+            product = intersection_label.value {
+              value = shallow_symbol,
+              expr_type = std.type_sub(intersection_label.value.expr_type, mapping),
+            },
+            expr_type = intersection_type,
+            annotations = ast.default_annotations(),
+            span = intersection_label.value.span,
+          },
           annotations = ast.default_annotations(),
           span = intersection_label.value.span,
         }
@@ -3418,82 +3408,82 @@ local function rewrite_initial_copyin(cx, shard_loop, intersections, intersectio
 
         local check = flow.node.Opaque {
           action = ast.typed.stat.Var {
-            symbols = terralib.newlist({cond_symbol}),
-            types = terralib.newlist({int}),
-            values = terralib.newlist({
-                ast.typed.expr.Cast {
-                  fn = ast.typed.expr.Function {
-                    value = int,
-                    expr_type = {std.untyped} -> int,
-                    annotations = ast.default_annotations(),
-                    span = span,
-                  },
-                  arg = ast.typed.expr.Call {
-                    fn = ast.typed.expr.Function {
-                      value = std.c.legion_index_partition_is_complete,
-                      expr_type = std.c.legion_index_partition_is_complete:gettype(),
-                      annotations = ast.default_annotations(),
-                      span = span,
-                    },
-                    args = terralib.newlist({
-                        ast.typed.expr.RawRuntime {
-                          expr_type = std.c.legion_runtime_t,
-                          annotations = ast.default_annotations(),
-                          span = span,
-                        },
-                        ast.typed.expr.Call {
-                          fn = ast.typed.expr.Function {
-                            value = std.c.legion_index_space_get_parent_index_partition,
-                            expr_type = std.c.legion_index_space_get_parent_index_partition:gettype(),
-                            annotations = ast.default_annotations(),
-                            span = span,
-                          },
-                          args = terralib.newlist({
-                              ast.typed.expr.RawRuntime {
-                                expr_type = std.c.legion_runtime_t,
-                                annotations = ast.default_annotations(),
-                                span = span,
-                              },
-                              ast.typed.expr.FieldAccess {
-                                value = ast.typed.expr.RawValue {
-                                  value = ast.typed.expr.IndexAccess {
-                                    value = lhs_label.value,
-                                    index = ast.typed.expr.Constant {
-                                      value = 0,
-                                      expr_type = int32,
-                                      annotations = ast.default_annotations(),
-                                      span = span,
-                                    },
-                                    expr_type = lhs_type:subregion_dynamic(),
-                                    annotations = ast.default_annotations(),
-                                    span = span,
-                                  },
-                                  expr_type = std.c.legion_logical_region_t,
-                                  annotations = ast.default_annotations(),
-                                  span = span,
-                                },
-                                field_name = "index_space",
-                                expr_type = std.c.legion_index_space_t,
-                                annotations = ast.default_annotations(),
-                                span = span,
-                              },
-                          }),
-                          conditions = terralib.newlist({}),
-                          expr_type = std.c.legion_index_partition_t,
-                          annotations = ast.default_annotations(),
-                          span = span,
-                        },
-                    }),
-                    conditions = terralib.newlist({}),
-                    expr_type = bool,
-                    annotations = ast.default_annotations(),
-                    span = span,
-                  },
-                  expr_type = int,
+            symbol = cond_symbol,
+            type = int,
+            value = ast.typed.expr.Cast {
+              fn = ast.typed.expr.Function {
+                value = int,
+                expr_type = {std.untyped} -> int,
+                annotations = ast.default_annotations(),
+                span = span,
+              },
+              arg = ast.typed.expr.Call {
+                fn = ast.typed.expr.Function {
+                  value = std.c.legion_index_partition_is_complete,
+                  expr_type = std.c.legion_index_partition_is_complete:gettype(),
                   annotations = ast.default_annotations(),
                   span = span,
                 },
-            }),
+                args = terralib.newlist({
+                    ast.typed.expr.RawRuntime {
+                      expr_type = std.c.legion_runtime_t,
+                      annotations = ast.default_annotations(),
+                      span = span,
+                    },
+                    ast.typed.expr.Call {
+                      fn = ast.typed.expr.Function {
+                        value = std.c.legion_index_space_get_parent_index_partition,
+                        expr_type = std.c.legion_index_space_get_parent_index_partition:gettype(),
+                        annotations = ast.default_annotations(),
+                        span = span,
+                      },
+                      args = terralib.newlist({
+                          ast.typed.expr.RawRuntime {
+                            expr_type = std.c.legion_runtime_t,
+                            annotations = ast.default_annotations(),
+                            span = span,
+                          },
+                          ast.typed.expr.FieldAccess {
+                            value = ast.typed.expr.RawValue {
+                              value = ast.typed.expr.IndexAccess {
+                                value = lhs_label.value,
+                                index = ast.typed.expr.Constant {
+                                  value = 0,
+                                  expr_type = int32,
+                                  annotations = ast.default_annotations(),
+                                  span = span,
+                                },
+                                expr_type = lhs_type:subregion_dynamic(),
+                                annotations = ast.default_annotations(),
+                                span = span,
+                              },
+                              expr_type = std.c.legion_logical_region_t,
+                              annotations = ast.default_annotations(),
+                              span = span,
+                            },
+                            field_name = "index_space",
+                            expr_type = std.c.legion_index_space_t,
+                            annotations = ast.default_annotations(),
+                            span = span,
+                          },
+                      }),
+                      conditions = terralib.newlist({}),
+                      replicable = true,
+                      expr_type = std.c.legion_index_partition_t,
+                      annotations = ast.default_annotations(),
+                      span = span,
+                    },
+                }),
+                conditions = terralib.newlist({}),
+                replicable = true,
+                expr_type = bool,
+                annotations = ast.default_annotations(),
+                span = span,
+              },
+              expr_type = int,
+              annotations = ast.default_annotations(),
+              span = span,
+            },
             annotations = ast.default_annotations(),
             span = span,
           }
@@ -3548,16 +3538,14 @@ local function rewrite_initial_copyin(cx, shard_loop, intersections, intersectio
 
         local get_barrier_list = flow.node.Opaque {
           action = ast.typed.stat.Var {
-            symbols = terralib.newlist({barrier_list_symbol}),
-            types = terralib.newlist({barrier_list_type}),
-            values = terralib.newlist({
-              ast.typed.expr.ListPhaseBarriers {
-                product = intersection_label.value,
-                expr_type = barrier_list_type,
-                annotations = ast.default_annotations(),
-                span = span,
-              },
-            }),
+            symbol = barrier_list_symbol,
+            type = barrier_list_type,
+            value = ast.typed.expr.ListPhaseBarriers {
+              product = intersection_label.value,
+              expr_type = barrier_list_type,
+              annotations = ast.default_annotations(),
+              span = span,
+            },
             annotations = ast.default_annotations(),
             span = span,
           }
@@ -3645,15 +3633,13 @@ local function rewrite_initial_copyin(cx, shard_loop, intersections, intersectio
             block = ast.typed.Block {
               stats = terralib.newlist({
                   ast.typed.stat.Assignment {
-                    lhs = terralib.newlist({barrier_list_label.value}),
-                    rhs = terralib.newlist({
-                        ast.typed.expr.Advance {
-                          value = barrier_list_label.value,
-                          expr_type = barrier_list_type,
-                          annotations = ast.default_annotations(),
-                          span = shard_label.span,
-                        }
-                    }),
+                    lhs = barrier_list_label.value,
+                    rhs = ast.typed.expr.Advance {
+                      value = barrier_list_label.value,
+                      expr_type = barrier_list_type,
+                      annotations = ast.default_annotations(),
+                      span = shard_label.span,
+                    },
                     annotations = ast.default_annotations(),
                     span = shard_label.span,
                   },
@@ -3727,17 +3713,15 @@ local function compute_global_index(block_cx, loop_label, global_index_symbol,
   local part_indices_nid = block_cx.graph:add_node(shard_part_indices_label)
   local compute_global_index_nid = block_cx.graph:add_node(flow.node.Opaque {
     action = ast.typed.stat.Var {  -- var global_index = shard_part_indices[local_index]
-      symbols = terralib.newlist({global_index_symbol}),
-      types = terralib.newlist({global_index_type}),
-      values = terralib.newlist({
-        ast.typed.expr.IndexAccess {
-          value = shard_part_indices_label.value,
-          index = local_index_label.value,
-          expr_type = global_index_type,
-          annotations = ast.default_annotations(),
-          span = global_index_label.value.span
-        },
-      }),
+      symbol = global_index_symbol,
+      type = global_index_type,
+      value = ast.typed.expr.IndexAccess {
+        value = shard_part_indices_label.value,
+        index = local_index_label.value,
+        expr_type = global_index_type,
+        annotations = ast.default_annotations(),
+        span = global_index_label.value.span
+      },
       annotations = ast.default_annotations(),
       span = global_index_label.value.span,
     }
@@ -4093,15 +4077,13 @@ local function synchronize_shard_start(cx, shard_loop, precondition_labels)
               span = shard_label.span,
             },
             ast.typed.stat.Assignment {
-              lhs = terralib.newlist({barrier_label.value}),
-              rhs = terralib.newlist({
-                  ast.typed.expr.Advance {
-                    value = barrier_label.value,
-                    expr_type = barrier_type,
-                    annotations = ast.default_annotations(),
-                    span = shard_label.span,
-                  }
-              }),
+              lhs = barrier_label.value,
+              rhs = ast.typed.expr.Advance {
+                value = barrier_label.value,
+                expr_type = barrier_type,
+                annotations = ast.default_annotations(),
+                span = shard_label.span,
+              },
               annotations = ast.default_annotations(),
               span = shard_label.span,
             },
@@ -4354,7 +4336,7 @@ local function get_slice_type_and_symbol(cx, region_type, list_type, label)
     std.is_list_of_partitions(region_type)
   then
     local parent_list_type = list_type:slice()
-    for other_region, _ in pairs(cx.tree.region_universe) do
+    for other_region, _ in cx.tree.region_universe:items() do
       assert(not std.type_eq(parent_list_type, other_region))
       if not std.type_eq(other_region, list_type) and
         std.type_maybe_eq(parent_list_type:fspace(), other_region:fspace())
@@ -4477,49 +4459,69 @@ local function rewrite_shard_slices(cx, shard_vars, global_vars, lists,
 
   -- Use index and stride to compute shard bounds.
   local nparts_nid = cx.graph:add_node(global_vars.nparts)
-  local compute_bounds = flow.node.Opaque {
+  local symbols = bound_labels:map(
+    function(bound) return bound.value.value end)
+  local types = bound_labels:map(
+    function(bound) return std.as_read(bound.value.expr_type) end)
+  local compute_lower = flow.node.Opaque {
     action = ast.typed.stat.Var {
-      symbols = bound_labels:map(function(bound) return bound.value.value end),
-      types = bound_labels:map(
-        function(bound) return std.as_read(bound.value.expr_type) end),
-      values = terralib.newlist({
-          index_label.value,
-          ast.typed.expr.Binary {
-            lhs = ast.typed.expr.Binary {
-              lhs = index_label.value,
-              rhs = stride_label.value,
-              op = "+",
-              expr_type = std.as_read(index_label.value.expr_type),
-              annotations = ast.default_annotations(),
-              span = index_label.value.span,
-            },
-            rhs = global_vars.nparts.value,
-            op = "min",
-            expr_type = std.as_read(index_label.value.expr_type),
-            annotations = ast.default_annotations(),
-            span = index_label.value.span,
-          },
-      }),
+      symbol = symbols[1],
+      type = types[1],
+      value = index_label.value,
       annotations = ast.default_annotations(),
       span = index_label.value.span,
     }
   }
-  local compute_bounds_nid = cx.graph:add_node(compute_bounds)
-  for _, bound_nid in ipairs(bound_nids) do
-    cx.graph:add_edge(
-      flow.edge.HappensBefore {},
-      compute_bounds_nid, cx.graph:node_sync_port(compute_bounds_nid),
-      bound_nid, cx.graph:node_sync_port(bound_nid))
-  end
+  local compute_upper = flow.node.Opaque {
+    action = ast.typed.stat.Var {
+      symbol = symbols[2],
+      type = types[2],
+      value = ast.typed.expr.Binary {
+        lhs = ast.typed.expr.Binary {
+          lhs = index_label.value,
+          rhs = stride_label.value,
+          op = "+",
+          expr_type = std.as_read(index_label.value.expr_type),
+          annotations = ast.default_annotations(),
+          span = index_label.value.span,
+        },
+        rhs = global_vars.nparts.value,
+        op = "min",
+        expr_type = std.as_read(index_label.value.expr_type),
+        annotations = ast.default_annotations(),
+        span = index_label.value.span,
+      },
+      annotations = ast.default_annotations(),
+      span = index_label.value.span,
+    }
+  }
+  local compute_lower_nid = cx.graph:add_node(compute_lower)
+  cx.graph:add_edge(
+    flow.edge.HappensBefore {},
+    compute_lower_nid, cx.graph:node_sync_port(compute_lower_nid),
+    bound_nids[1], cx.graph:node_sync_port(bound_nids[1]))
   cx.graph:add_edge(
     flow.edge.Read(flow.default_mode()), index_nid, cx.graph:node_result_port(index_nid),
-    compute_bounds_nid, cx.graph:node_available_port(compute_bounds_nid))
+    compute_lower_nid, cx.graph:node_available_port(compute_lower_nid))
+
+  local compute_upper_nid = cx.graph:add_node(compute_upper)
+  cx.graph:add_edge(
+    flow.edge.HappensBefore {},
+    compute_upper_nid, cx.graph:node_sync_port(compute_upper_nid),
+    bound_nids[2], cx.graph:node_sync_port(bound_nids[2]))
+  cx.graph:add_edge(
+    flow.edge.HappensBefore {},
+    compute_lower_nid, cx.graph:node_sync_port(compute_lower_nid),
+    compute_upper_nid, cx.graph:node_sync_port(compute_upper_nid))
+  cx.graph:add_edge(
+    flow.edge.Read(flow.default_mode()), index_nid, cx.graph:node_result_port(index_nid),
+    compute_upper_nid, cx.graph:node_available_port(compute_upper_nid))
   cx.graph:add_edge(
     flow.edge.Read(flow.default_mode()), stride_nid, cx.graph:node_result_port(stride_nid),
-    compute_bounds_nid, cx.graph:node_available_port(compute_bounds_nid))
+    compute_upper_nid, cx.graph:node_available_port(compute_upper_nid))
   cx.graph:add_edge(
     flow.edge.Read(flow.default_mode()), nparts_nid, cx.graph:node_result_port(nparts_nid),
-    compute_bounds_nid, cx.graph:node_available_port(nparts_nid))
+    compute_upper_nid, cx.graph:node_available_port(nparts_nid))
 
   -- Compute `shard_nparts = shard_bound2 - shard_bound1`.
   local shard_nparts_nid = find_matching_input(cx, shard_task_nid,
@@ -4529,18 +4531,16 @@ local function rewrite_shard_slices(cx, shard_vars, global_vars, lists,
   assert(shard_nparts_nid)
   local compute_shard_nparts_nid = cx.graph:add_node(flow.node.Opaque {
     action = ast.typed.stat.Var {
-      symbols = terralib.newlist({shard_vars.nparts.value.value}),
-      types = terralib.newlist({bounds_type}),
-      values = terralib.newlist({
-        ast.typed.expr.Binary {
-          lhs = bound_labels[2].value,
-          rhs = bound_labels[1].value,
-          op = "-",
-          expr_type = bounds_type,
-          annotations = ast.default_annotations(),
-          span = index_label.value.span,
-        },
-      }),
+      symbol = shard_vars.nparts.value.value,
+      type = bounds_type,
+      value = ast.typed.expr.Binary {
+        lhs = bound_labels[2].value,
+        rhs = bound_labels[1].value,
+        op = "-",
+        expr_type = bounds_type,
+        annotations = ast.default_annotations(),
+        span = index_label.value.span,
+      },
       annotations = ast.default_annotations(),
       span = index_label.value.span,
     }
@@ -4548,7 +4548,7 @@ local function rewrite_shard_slices(cx, shard_vars, global_vars, lists,
   for i, bound_nid in ipairs(bound_nids) do
     cx.graph:add_edge(
       flow.edge.Read(flow.default_mode()),
-      bound_nid, cx.graph:node_result_port(compute_bounds_nid),
+      bound_nid, cx.graph:node_result_port(compute_upper_nid),
       compute_shard_nparts_nid, i)
   end
   cx.graph:add_edge(
@@ -4567,17 +4567,15 @@ local function rewrite_shard_slices(cx, shard_vars, global_vars, lists,
   -- `var shard_list_indices = list_range(shard_bound1, shard_bound2)`.
   local compute_shard_list_indices_nid = cx.graph:add_node(flow.node.Opaque {
     action = ast.typed.stat.Var {
-      symbols = terralib.newlist({shard_list_indices_label.value.value}),
-      types = terralib.newlist({shard_list_indices_type}),
-      values = terralib.newlist({
-        ast.typed.expr.ListRange {
-          start = bound_labels[1].value,
-          stop = bound_labels[2].value,
-          expr_type = shard_list_indices_type,
-          annotations = ast.default_annotations(),
-          span = index_label.value.span,
-        }
-      }),
+      symbol = shard_list_indices_label.value.value,
+      type = shard_list_indices_type,
+      value = ast.typed.expr.ListRange {
+        start = bound_labels[1].value,
+        stop = bound_labels[2].value,
+        expr_type = shard_list_indices_type,
+        annotations = ast.default_annotations(),
+        span = index_label.value.span,
+      },
       annotations = ast.default_annotations(),
       span = index_label.value.span,
     }
@@ -4601,17 +4599,15 @@ local function rewrite_shard_slices(cx, shard_vars, global_vars, lists,
   -- `var shard_part_indices = part_indices[shard_list_indices]`.
   local compute_shard_part_indices_nid = cx.graph:add_node(flow.node.Opaque {
     action = ast.typed.stat.Var {
-      symbols = terralib.newlist({shard_part_indices_label.value.value}),
-      types = terralib.newlist({shard_part_indices_type}),
-      values = terralib.newlist({
-        ast.typed.expr.IndexAccess {
-          value = global_vars.part_indices.value,
-          index = shard_list_indices_label.value,
-          expr_type = shard_part_indices_type,
-          annotations = ast.default_annotations(),
-          span = index_label.value.span,
-        },
-      }),
+      symbol = shard_part_indices_label.value.value,
+      type = shard_part_indices_type,
+      value = ast.typed.expr.IndexAccess {
+        value = global_vars.part_indices.value,
+        index = shard_list_indices_label.value,
+        expr_type = shard_part_indices_type,
+        annotations = ast.default_annotations(),
+        span = index_label.value.span,
+      },
       annotations = ast.default_annotations(),
       span = index_label.value.span,
     }
@@ -4860,6 +4856,7 @@ local function make_must_epoch(cx, block, annotations, span)
           },
         }),
         conditions = terralib.newlist({}),
+        replicable = true,
         expr_type = terralib.types.unit,
         annotations = ast.default_annotations(),
         span = span,
@@ -5418,52 +5415,51 @@ local function issue_zipped_copy(cx, src_nids, dst_in_nids, dst_out_nids,
 
     local check = flow.node.Opaque {
       action = ast.typed.stat.Var {
-        symbols = terralib.newlist({cond_symbol}),
-        types = terralib.newlist({int}),
-        values = terralib.newlist({
-            ast.typed.expr.Cast {
-              fn = ast.typed.expr.Function {
-                value = int,
-                expr_type = {std.untyped} -> int,
-                annotations = ast.default_annotations(),
-                span = span,
-              },
-              arg = ast.typed.expr.Call {
-                fn = ast.typed.expr.Function {
-                  value = std.c.legion_index_partition_is_complete,
-                  expr_type = std.c.legion_index_partition_is_complete:gettype(),
-                  annotations = ast.default_annotations(),
-                  span = span,
-                },
-                args = terralib.newlist({
-                    ast.typed.expr.RawRuntime {
-                      expr_type = std.c.legion_runtime_t,
-                      annotations = ast.default_annotations(),
-                      span = span,
-                    },
-                    ast.typed.expr.FieldAccess {
-                      value = ast.typed.expr.RawValue {
-                        value = shadow_label.value,
-                        expr_type = std.c.legion_logical_partition_t,
-                        annotations = ast.default_annotations(),
-                        span = span,
-                      },
-                      field_name = "index_partition",
-                      expr_type = std.c.legion_index_partition_t,
-                      annotations = ast.default_annotations(),
-                      span = span,
-                    },
-                }),
-                conditions = terralib.newlist({}),
-                expr_type = bool,
-                annotations = ast.default_annotations(),
-                span = span,
-              },
-              expr_type = int,
+        symbol = cond_symbol,
+        type = int,
+        value = ast.typed.expr.Cast {
+          fn = ast.typed.expr.Function {
+            value = int,
+            expr_type = {std.untyped} -> int,
+            annotations = ast.default_annotations(),
+            span = span,
+          },
+          arg = ast.typed.expr.Call {
+            fn = ast.typed.expr.Function {
+              value = std.c.legion_index_partition_is_complete,
+              expr_type = std.c.legion_index_partition_is_complete:gettype(),
               annotations = ast.default_annotations(),
               span = span,
             },
-        }),
+            args = terralib.newlist({
+                ast.typed.expr.RawRuntime {
+                  expr_type = std.c.legion_runtime_t,
+                  annotations = ast.default_annotations(),
+                  span = span,
+                },
+                ast.typed.expr.FieldAccess {
+                  value = ast.typed.expr.RawValue {
+                    value = shadow_label.value,
+                    expr_type = std.c.legion_logical_partition_t,
+                    annotations = ast.default_annotations(),
+                    span = span,
+                  },
+                  field_name = "index_partition",
+                  expr_type = std.c.legion_index_partition_t,
+                  annotations = ast.default_annotations(),
+                  span = span,
+                },
+            }),
+            conditions = terralib.newlist({}),
+            replicable = true,
+            expr_type = bool,
+            annotations = ast.default_annotations(),
+            span = span,
+          },
+          expr_type = int,
+          annotations = ast.default_annotations(),
+          span = span,
+        },
         annotations = ast.default_annotations(),
         span = span,
       }
@@ -5598,9 +5594,9 @@ local function issue_input_copies_partition(
   }
   local duplicate = flow.node.Opaque {
     action = ast.typed.stat.Var {
-      symbols = terralib.newlist({ first_new_label.value.value }),
-      types = terralib.newlist({ region_type }),
-      values = terralib.newlist({ duplicated }),
+      symbol = first_new_label.value.value,
+      type = region_type,
+      value = duplicated,
       annotations = ast.default_annotations(),
       span = first_partition_label.value.span,
     }
@@ -5653,21 +5649,15 @@ local function issue_input_copies_cross_product(
   local part_indices_label = cx.graph:node_label(part_indices_nid)
   local duplicate = flow.node.Opaque {
     action = ast.typed.stat.Var {
-      symbols = terralib.newlist({
-          first_new_label.value.value,
-      }),
-      types = terralib.newlist({
-          region_type,
-      }),
-      values = terralib.newlist({
-          ast.typed.expr.ListSliceCrossProduct {
-            product = first_product_label.value,
-            indices = part_indices_label.value,
-            expr_type = std.as_read(first_new_label.value.expr_type),
-            annotations = ast.default_annotations(),
-            span = first_product_label.value.span,
-          },
-      }),
+      symbol = first_new_label.value.value,
+      type = region_type,
+      value = ast.typed.expr.ListSliceCrossProduct {
+        product = first_product_label.value,
+        indices = part_indices_label.value,
+        expr_type = std.as_read(first_new_label.value.expr_type),
+        annotations = ast.default_annotations(),
+        span = first_product_label.value.span,
+      },
       annotations = ast.default_annotations(),
       span = first_product_label.value.span,
     }
@@ -5791,22 +5781,16 @@ local function issue_intersection_creation(cx, intersection_nids,
 
   local cross_product = flow.node.Opaque {
     action = ast.typed.stat.Var {
-      symbols = terralib.newlist({
-          first_intersection.value.value,
-      }),
-      types = terralib.newlist({
-          first_intersection.region_type,
-      }),
-      values = terralib.newlist({
-          ast.typed.expr.ListCrossProduct {
-            lhs = lhs.value,
-            rhs = rhs.value,
-            shallow = true,
-            expr_type = std.as_read(first_intersection.value.expr_type),
-            annotations = ast.default_annotations(),
-            span = first_intersection.value.span,
-          },
-      }),
+      symbol = first_intersection.value.value,
+      type = first_intersection.region_type,
+      value = ast.typed.expr.ListCrossProduct {
+        lhs = lhs.value,
+        rhs = rhs.value,
+        shallow = true,
+        expr_type = std.as_read(first_intersection.value.expr_type),
+        annotations = ast.default_annotations(),
+        span = first_intersection.value.span,
+      },
       annotations = ast.default_annotations(),
       span = first_intersection.value.span,
     }
@@ -5835,20 +5819,14 @@ local function issue_barrier_creation(cx, rhs_nid, intersection_nid,
 
   local list_barriers = flow.node.Opaque {
     action = ast.typed.stat.Var {
-      symbols = terralib.newlist({
-          barrier_out.value.value,
-      }),
-      types = terralib.newlist({
-          std.as_read(barrier_out.value.expr_type),
-      }),
-      values = terralib.newlist({
-          ast.typed.expr.ListPhaseBarriers {
-            product = intersection.value,
-            expr_type = std.as_read(barrier_out.value.expr_type),
-            annotations = ast.default_annotations(),
-            span = barrier_out.value.span,
-          },
-      }),
+      symbol = barrier_out.value.value,
+      type = std.as_read(barrier_out.value.expr_type),
+      value = ast.typed.expr.ListPhaseBarriers {
+        product = intersection.value,
+        expr_type = std.as_read(barrier_out.value.expr_type),
+        annotations = ast.default_annotations(),
+        span = barrier_out.value.span,
+      },
       annotations = ast.default_annotations(),
       span = barrier_out.value.span,
     }
@@ -5864,22 +5842,16 @@ local function issue_barrier_creation(cx, rhs_nid, intersection_nid,
 
   local list_invert = flow.node.Opaque {
     action = ast.typed.stat.Var {
-      symbols = terralib.newlist({
-          barrier_in.value.value,
-      }),
-      types = terralib.newlist({
-          std.as_read(barrier_in.value.expr_type),
-      }),
-      values = terralib.newlist({
-          ast.typed.expr.ListInvert {
-            rhs = rhs.value,
-            product = intersection.value,
-            barriers = barrier_out.value,
-            expr_type = std.as_read(barrier_in.value.expr_type),
-            annotations = ast.default_annotations(),
-            span = barrier_in.value.span,
-          },
-      }),
+      symbol = barrier_in.value.value,
+      type = std.as_read(barrier_in.value.expr_type),
+      value = ast.typed.expr.ListInvert {
+        rhs = rhs.value,
+        product = intersection.value,
+        barriers = barrier_out.value,
+        expr_type = std.as_read(barrier_in.value.expr_type),
+        annotations = ast.default_annotations(),
+        span = barrier_in.value.span,
+      },
       annotations = ast.default_annotations(),
       span = barrier_in.value.span,
     }
@@ -5911,32 +5883,30 @@ local function issue_collective_creation(cx, loop_nid, collective_nid, op, npart
   local nparts_label = cx.graph:node_label(nparts_nid)
   local create_label = flow.node.Opaque {
     action = ast.typed.stat.Var {
-      symbols = terralib.newlist({collective.value.value}),
-      types = terralib.newlist({collective_type}),
-      values = terralib.newlist({
-          ast.typed.expr.DynamicCollective {
-            arrivals = ast.typed.expr.Binary {
-              lhs = ast.typed.expr.Binary {
-                lhs = nparts_label.value,
-                rhs = stride_minus_1,
-                op = "+",
-                expr_type = int,
-                annotations = ast.default_annotations(),
-                span = collective.value.span,
-              },
-              rhs = stride,
-              op = "/",
-              expr_type = int,
-              annotations = ast.default_annotations(),
-              span = collective.value.span,
-            },
-            op = op,
-            value_type = value_type,
-            expr_type = collective_type,
+      symbol = collective.value.value,
+      type = collective_type,
+      value = ast.typed.expr.DynamicCollective {
+        arrivals = ast.typed.expr.Binary {
+          lhs = ast.typed.expr.Binary {
+            lhs = nparts_label.value,
+            rhs = stride_minus_1,
+            op = "+",
+            expr_type = int,
             annotations = ast.default_annotations(),
             span = collective.value.span,
           },
-      }),
+          rhs = stride,
+          op = "/",
+          expr_type = int,
+          annotations = ast.default_annotations(),
+          span = collective.value.span,
+        },
+        op = op,
+        value_type = value_type,
+        expr_type = collective_type,
+        annotations = ast.default_annotations(),
+        span = collective.value.span,
+      },
       annotations = ast.default_annotations(),
       span = collective.value.span,
     }
@@ -5963,30 +5933,28 @@ local function issue_single_barrier_creation(cx, barrier_nid, nparts_nid)
   local nparts_label = cx.graph:node_label(nparts_nid)
   local create_label = flow.node.Opaque {
     action = ast.typed.stat.Var {
-      symbols = terralib.newlist({barrier.value.value}),
-      types = terralib.newlist({barrier_type}),
-      values = terralib.newlist({
-          ast.typed.expr.PhaseBarrier {
-            value = ast.typed.expr.Binary {
-              lhs = ast.typed.expr.Binary {
-                lhs = nparts_label.value,
-                rhs = stride_minus_1,
-                op = "+",
-                expr_type = int,
-                annotations = ast.default_annotations(),
-                span = barrier.value.span,
-              },
-              rhs = stride,
-              op = "/",
-              expr_type = int,
-              annotations = ast.default_annotations(),
-              span = barrier.value.span,
-            },
-            expr_type = barrier_type,
+      symbol = barrier.value.value,
+      type = barrier_type,
+      value = ast.typed.expr.PhaseBarrier {
+        value = ast.typed.expr.Binary {
+          lhs = ast.typed.expr.Binary {
+            lhs = nparts_label.value,
+            rhs = stride_minus_1,
+            op = "+",
+            expr_type = int,
             annotations = ast.default_annotations(),
             span = barrier.value.span,
           },
-      }),
+          rhs = stride,
+          op = "/",
+          expr_type = int,
+          annotations = ast.default_annotations(),
+          span = barrier.value.span,
+        },
+        expr_type = barrier_type,
+        annotations = ast.default_annotations(),
+        span = barrier.value.span,
+      },
       annotations = ast.default_annotations(),
       span = barrier.value.span,
     }
@@ -6013,17 +5981,15 @@ local function issue_global_vars_creation_forlist(cx, loop_nid, nparts_nid,
   local span = nparts_label.value.span
   local compute_nparts_nid = cx.graph:add_node(flow.node.Opaque {
     action = ast.typed.stat.Var {
-      symbols = terralib.newlist({nparts_label.value.value}),
-      types = terralib.newlist({int}),
-      values = terralib.newlist({
-        ast.typed.expr.FieldAccess {
-          value = bound_label.value,
-          field_name = "volume",
-          expr_type = int,
-          annotations = ast.default_annotations(),
-          span = span,
-        },
-      }),
+      symbol = nparts_label.value.value,
+      type = int,
+      value = ast.typed.expr.FieldAccess {
+        value = bound_label.value,
+        field_name = "volume",
+        expr_type = int,
+        annotations = ast.default_annotations(),
+        span = span,
+      },
       annotations = ast.default_annotations(),
       span = span,
     }
@@ -6042,16 +6008,14 @@ local function issue_global_vars_creation_forlist(cx, loop_nid, nparts_nid,
   local part_indices_type = std.as_read(part_indices_label.value.expr_type)
   local compute_part_indices_nid = cx.graph:add_node(flow.node.Opaque {
     action = ast.typed.stat.Var {
-      symbols = terralib.newlist({part_indices_label.value.value}),
-      types = terralib.newlist({part_indices_type}),
-      values = terralib.newlist({
-        ast.typed.expr.ListIspace {
-          ispace = bound_label.value,
-          expr_type = part_indices_type,
-          annotations = ast.default_annotations(),
-          span = span,
-        },
-      }),
+      symbol = part_indices_label.value.value,
+      type = part_indices_type,
+      value = ast.typed.expr.ListIspace {
+        ispace = bound_label.value,
+        expr_type = part_indices_type,
+        annotations = ast.default_annotations(),
+        span = span,
+      },
       annotations = ast.default_annotations(),
       span = span,
     }
@@ -6075,18 +6039,16 @@ local function issue_global_vars_creation_fornum(cx, loop_nid, nparts_nid,
   local nparts_type = std.as_read(nparts_label.value.expr_type)
   local compute_nparts_nid = cx.graph:add_node(flow.node.Opaque {
     action = ast.typed.stat.Var {
-      symbols = terralib.newlist({nparts_label.value.value}),
-      types = terralib.newlist({nparts_type}),
-      values = terralib.newlist({
-        ast.typed.expr.Binary {
-          lhs = original_bounds[2].value,
-          rhs = original_bounds[1].value,
-          op = "-",
-          expr_type = nparts_type,
-          annotations = ast.default_annotations(),
-          span = span,
-        },
-      }),
+      symbol = nparts_label.value.value,
+      type = nparts_type,
+      value = ast.typed.expr.Binary {
+        lhs = original_bounds[2].value,
+        rhs = original_bounds[1].value,
+        op = "-",
+        expr_type = nparts_type,
+        annotations = ast.default_annotations(),
+        span = span,
+      },
       annotations = ast.default_annotations(),
       span = span,
     }
@@ -6101,17 +6063,15 @@ local function issue_global_vars_creation_fornum(cx, loop_nid, nparts_nid,
   local part_indices_type = std.as_read(part_indices_label.value.expr_type)
   local compute_part_indices_nid = cx.graph:add_node(flow.node.Opaque {
     action = ast.typed.stat.Var {
-      symbols = terralib.newlist({part_indices_label.value.value}),
-      types = terralib.newlist({part_indices_type}),
-      values = terralib.newlist({
-        ast.typed.expr.ListRange {
-          start = original_bounds[1].value,
-          stop = original_bounds[2].value,
-          expr_type = part_indices_type,
-          annotations = ast.default_annotations(),
-          span = span,
-        },
-      }),
+      symbol = part_indices_label.value.value,
+      type = part_indices_type,
+      value = ast.typed.expr.ListRange {
+        start = original_bounds[1].value,
+        stop = original_bounds[2].value,
+        expr_type = part_indices_type,
+        annotations = ast.default_annotations(),
+        span = span,
+      },
       annotations = ast.default_annotations(),
       span = span,
     }
