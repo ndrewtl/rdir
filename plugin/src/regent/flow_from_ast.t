@@ -3183,11 +3183,6 @@ function flow_from_ast.stat_block(cx, node)
 end
 
 function flow_from_ast.stat_var(cx, node)
-  -- FIXME: Workaround for bug in inline optimization.
-  if node.type == terralib.types.unit then
-    return
-  end
-
   as_opaque_stat(cx, node)
 end
 
