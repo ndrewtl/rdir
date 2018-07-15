@@ -77,7 +77,7 @@ function flow.is_opaque_node(label)
   return label:is(flow.node.Opaque) or (
     label:is(flow.node.Task) and label.opaque) or
     -- FIXME: Depends on contents of subgraph.
-    label:is(flow.node.ctrl.ForNum) or label:is(flow.node.ctrl.ForList)
+    label:is(flow.node.ctrl)
 end
 
 function graph:has_node(node)
