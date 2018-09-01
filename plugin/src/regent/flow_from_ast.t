@@ -2019,6 +2019,9 @@ function analyze_privileges.stat(cx, node)
   elseif node:is(ast.typed.stat.Fence) then
     return nil
 
+  elseif node:is(ast.typed.stat.ParallelPrefix) then
+    return nil
+
   else
     assert(false, "unexpected node type " .. tostring(node:type()))
   end
@@ -3246,6 +3249,11 @@ function flow_from_ast.stat_fence(cx, node)
   as_opaque_stat(cx, node)
 end
 
+function flow_from_ast.stat_parallel_prefix(cx, node)
+  -- TODO: Need a proper analysis
+  as_opaque_stat(cx, node)
+end
+
 function flow_from_ast.stat(cx, node)
   if node:is(ast.typed.stat.If) then
     flow_from_ast.stat_if(cx, node)
@@ -3294,6 +3302,9 @@ function flow_from_ast.stat(cx, node)
 
   elseif node:is(ast.typed.stat.Fence) then
     flow_from_ast.stat_fence(cx, node)
+
+  elseif node:is(ast.typed.stat.ParallelPrefix) then
+    flow_from_ast.stat_parallel_prefix(cx, node)
 
   else
     assert(false, "unexpected node type " .. tostring(node:type()))
