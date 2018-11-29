@@ -458,6 +458,7 @@ local function add_call_node(cx, nid, return_type)
   local original_label = cx.graph:node_label(nid)
   local label = flow.node.Task {
     opaque = false,
+    replicable = true,
     expr_type = return_type,
     annotations = ast.default_annotations(),
     span = original_label.span,
