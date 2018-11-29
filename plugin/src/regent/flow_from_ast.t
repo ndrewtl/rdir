@@ -2160,9 +2160,10 @@ local function as_opaque_expr(cx, generator, args, privilege_map)
   return attach_result(privilege_map, result_nid)
 end
 
-local function as_call_expr(cx, args, opaque, expr_type, annotations, span, privilege_map)
+local function as_call_expr(cx, args, opaque, replicable, expr_type, annotations, span, privilege_map)
   local label = flow.node.Task {
     opaque = opaque,
+    replicable = replicable,
     expr_type = expr_type,
     annotations = annotations,
     span = span,
@@ -2455,7 +2456,9 @@ function flow_from_ast.expr_call(cx, node, privilege_map, init_only)
 
   return as_call_expr(
     cx, inputs,
-    not std.is_task(node.fn.value), std.as_read(node.expr_type),
+    not std.is_task(node.fn.value),
+    node.replicable,
+    std.as_read(node.expr_type),
     node.annotations, node.span,
     privilege_map)
 end

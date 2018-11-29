@@ -574,7 +574,7 @@ function flow_to_ast.node_task(cx, nid)
     fn = fn,
     args = args,
     conditions = conditions,
-    replicable = false,
+    replicable = label.replicable,
     expr_type = label.expr_type,
     annotations = label.annotations,
     span = label.span,

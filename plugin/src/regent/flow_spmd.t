@@ -2387,6 +2387,7 @@ local function issue_barrier_await_blocking(cx, bar_nid, use_nid, after_nid, inn
 
     local consume_label = flow.node.Task {
       opaque = true,
+      replicable = false,
       expr_type = terralib.types.unit,
       annotations = ast.default_annotations(),
       span = use_label.span,
@@ -2429,6 +2430,7 @@ local function issue_barrier_await_blocking(cx, bar_nid, use_nid, after_nid, inn
 
   local call_label = flow.node.Task {
     opaque = false,
+    replicable = true,
     expr_type = scratch_type,
     annotations = ast.default_annotations(),
     span = use_label.span,

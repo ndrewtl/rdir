@@ -1043,7 +1043,7 @@ flow.node:leaf("Deref", {"expr_type", "annotations", "span"})
 flow.node:leaf("Advance", {"expr_type", "annotations", "span"})
 flow.node:leaf("Assignment", {"annotations", "span"})
 flow.node:leaf("Reduce", {"op", "annotations", "span"})
-flow.node:leaf("Task", {"opaque", "expr_type", "annotations", "span"})
+flow.node:leaf("Task", {"opaque", "replicable", "expr_type", "annotations", "span"})
 flow.node:leaf("Copy", {"src_field_paths", "dst_field_paths",
                         "op", "annotations", "span"})
 flow.node:leaf("Fill", {"dst_field_paths", "annotations", "span"})
