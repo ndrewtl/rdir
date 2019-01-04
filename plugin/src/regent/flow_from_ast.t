@@ -1446,6 +1446,14 @@ function analyze_privileges.expr_partition_by_field(cx, node, privilege_map)
     analyze_privileges.expr(cx, node.colors, reads))
 end
 
+function analyze_privileges.expr_partition_by_restriction(cx, node, privilege_map)
+  return privilege_meet(
+    analyze_privileges.expr(cx, node.region, reads),
+    analyze_privileges.expr(cx, node.transform, reads),
+    analyze_privileges.expr(cx, node.extent, reads),
+    analyze_privileges.expr(cx, node.colors, reads))
+end
+
 function analyze_privileges.expr_image(cx, node, privilege_map)
   return privilege_meet(
     analyze_privileges.expr(cx, node.parent, none),
@@ -1730,6 +1738,9 @@ function analyze_privileges.expr(cx, node, privilege_map)
 
   elseif node:is(ast.typed.expr.PartitionByField) then
     return analyze_privileges.expr_partition_by_field(cx, node, privilege_map)
+
+  elseif node:is(ast.typed.expr.PartitionByRestriction) then
+    return analyze_privileges.expr_partition_by_restriction(cx, node, privilege_map)
 
   elseif node:is(ast.typed.expr.Image) then
     return analyze_privileges.expr_image(cx, node, privilege_map)
@@ -2647,6 +2658,26 @@ function flow_from_ast.expr_partition_by_field(cx, node, privilege_map, init_onl
     privilege_map)
 end
 
+function flow_from_ast.expr_partition_by_restriction(cx, node, privilege_map, init_only)
+  local region = flow_from_ast.expr(cx, node.region, none)
+  local transform = flow_from_ast.expr(cx, node.transform, none)
+  local extent = flow_from_ast.expr(cx, node.extent, none)
+  local colors = flow_from_ast.expr(cx, node.colors, reads)
+
+  -- Make sure a symbol is available.
+  local expr_type = std.as_read(node.expr_type)
+  if not cx:has_region_symbol(expr_type) then
+    local symbol = std.newsymbol(expr_type)
+    cx:intern_region(node, symbol, node.expr_type)
+  end
+
+  return as_opaque_expr(
+    cx,
+    function(v1, v2, v3, v4) return node { region = v1, transform = v2, extent = v3, colors = v4 } end,
+    terralib.newlist({region, transform, extent, colors}),
+    privilege_map)
+end
+
 function flow_from_ast.expr_image(cx, node, privilege_map, init_only)
   local parent = flow_from_ast.expr(cx, node.parent, none)
   local partition = flow_from_ast.expr(cx, node.partition, none)
@@ -2964,6 +2995,9 @@ function flow_from_ast.expr(cx, node, privilege_map, init_only)
 
   elseif node:is(ast.typed.expr.PartitionByField) then
     return flow_from_ast.expr_partition_by_field(cx, node, privilege_map)
+
+  elseif node:is(ast.typed.expr.PartitionByRestriction) then
+    return flow_from_ast.expr_partition_by_restriction(cx, node, privilege_map)
 
   elseif node:is(ast.typed.expr.Image) then
     return flow_from_ast.expr_image(cx, node, privilege_map)
