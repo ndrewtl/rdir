@@ -360,6 +360,7 @@ function make_expr_result(cx, nid, action)
         ast.typed.stat.Assignment {
           lhs = result_label.value,
           rhs = action,
+          metadata = false,
           annotations = action.annotations,
           span = action.span,
         },
@@ -479,6 +480,7 @@ function flow_to_ast.node_assignment(cx, nid)
     return ast.typed.stat.Assignment {
       lhs = lh,
       rhs = rh,
+      metadata = false,
       annotations = label.annotations,
       span = label.span,
     }
@@ -512,6 +514,7 @@ function flow_to_ast.node_reduce(cx, nid)
       lhs = lh,
       rhs = rh,
       op = label.op,
+      metadata = false,
       annotations = label.annotations,
       span = label.span,
     }
@@ -1002,6 +1005,7 @@ function flow_to_ast.node_for_num(cx, nid)
         symbol = label.symbol,
         values = values,
         block = block,
+        metadata = false,
         annotations = label.annotations,
         span = label.span,
       },
@@ -1023,6 +1027,7 @@ function flow_to_ast.node_for_list(cx, nid)
         symbol = label.symbol,
         value = value,
         block = block,
+        metadata = false,
         annotations = label.annotations,
         span = label.span,
       },

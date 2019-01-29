@@ -2127,6 +2127,7 @@ local function issue_barrier_adjust(cx, barrier_nid, delta)
         annotations = ast.default_annotations(),
         span = barrier_label.value.span,
       },
+      metadata = false,
       annotations = ast.default_annotations(),
       span = barrier_label.value.span,
     }
@@ -3643,6 +3644,7 @@ local function rewrite_initial_copyin(cx, shard_loop, intersections, intersectio
                       annotations = ast.default_annotations(),
                       span = shard_label.span,
                     },
+                    metadata = false,
                     annotations = ast.default_annotations(),
                     span = shard_label.span,
                   },
@@ -4087,6 +4089,7 @@ local function synchronize_shard_start(cx, shard_loop, precondition_labels)
                 annotations = ast.default_annotations(),
                 span = shard_label.span,
               },
+              metadata = false,
               annotations = ast.default_annotations(),
               span = shard_label.span,
             },
