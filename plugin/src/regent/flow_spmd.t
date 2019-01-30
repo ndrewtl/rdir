@@ -2330,7 +2330,6 @@ do
     -- if std.config["mapping"] then ast = optimize_mapping.entry(ast) end
     if std.config["trace"] then ast = optimize_traces.entry(ast) end
     if std.config["no-dynamic-branches"] then ast = optimize_divergence.entry(ast) end
-    if std.config["vectorize"] then ast = vectorize_loops.entry(ast) end
 
     if std.config["pretty"] then print(pretty.entry(ast)) end
     ast = codegen.entry(ast)
