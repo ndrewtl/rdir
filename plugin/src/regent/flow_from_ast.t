@@ -1670,6 +1670,18 @@ function analyze_privileges.expr_import_ispace(cx, node, privilege_map)
   return analyze_privileges.expr(cx, node.value, reads)
 end
 
+function analyze_privileges.expr_import_region(cx, node, privilege_map)
+  return privilege_meet(analyze_privileges.expr(cx, node.ispace,    reads),
+                        analyze_privileges.expr(cx, node.value,     reads),
+                        analyze_privileges.expr(cx, node.field_ids, reads))
+end
+
+function analyze_privileges.expr_import_partition(cx, node, privilege_map)
+  return privilege_meet(analyze_privileges.expr(cx, node.region, reads),
+                        analyze_privileges.expr(cx, node.colors, reads),
+                        analyze_privileges.expr(cx, node.value,  reads))
+end
+
 function analyze_privileges.expr(cx, node, privilege_map)
   if node:is(ast.typed.expr.ID) then
     return analyze_privileges.expr_id(cx, node, privilege_map)
@@ -1835,6 +1847,12 @@ function analyze_privileges.expr(cx, node, privilege_map)
 
   elseif node:is(ast.typed.expr.ImportIspace) then
     return analyze_privileges.expr_import_ispace(cx, node, privilege_map)
+
+  elseif node:is(ast.typed.expr.ImportRegion) then
+    return analyze_privileges.expr_import_region(cx, node, privilege_map)
+
+  elseif node:is(ast.typed.expr.ImportPartition) then
+    return analyze_privileges.expr_import_partition(cx, node, privilege_map)
 
   else
     assert(false, "unexpected node type " .. tostring(node.node_type))
@@ -2939,6 +2957,28 @@ function flow_from_ast.expr_import_ispace(cx, node, privilege_map, init_only)
     privilege_map)
 end
 
+function flow_from_ast.expr_import_region(cx, node, privilege_map, init_only)
+  local ispace    = flow_from_ast.expr(cx, node.ispace,    reads)
+  local value     = flow_from_ast.expr(cx, node.value,     reads)
+  local field_ids = flow_from_ast.expr(cx, node.field_ids, reads)
+  return as_opaque_expr(
+    cx,
+    function(v1, v2, v3) return node { ispace = v1, value = v2, field_ids = v3 } end,
+    terralib.newlist({ispace, value, field_ids}),
+    privilege_map)
+end
+
+function flow_from_ast.expr_import_partition(cx, node, privilege_map, init_only)
+  local region = flow_from_ast.expr(cx, node.region, reads)
+  local colors = flow_from_ast.expr(cx, node.colors, reads)
+  local value  = flow_from_ast.expr(cx, node.value,  reads)
+  return as_opaque_expr(
+    cx,
+    function(v1, v2, v3) return node { region = v1, colors = v2, value = v3 } end,
+    terralib.newlist({region, colors, value}),
+    privilege_map)
+end
+
 function flow_from_ast.expr(cx, node, privilege_map, init_only)
   if node:is(ast.typed.expr.ID) then
     return flow_from_ast.expr_id(cx, node, privilege_map, init_only)
@@ -3065,6 +3105,12 @@ function flow_from_ast.expr(cx, node, privilege_map, init_only)
 
   elseif node:is(ast.typed.expr.ImportIspace) then
     return flow_from_ast.expr_import_ispace(cx, node, privilege_map, init_only)
+
+  elseif node:is(ast.typed.expr.ImportRegion) then
+    return flow_from_ast.expr_import_region(cx, node, privilege_map, init_only)
+
+  elseif node:is(ast.typed.expr.ImportPartition) then
+    return flow_from_ast.expr_import_partition(cx, node, privilege_map, init_only)
 
   else
     assert(false, "unexpected node type " .. tostring(node.node_type))
