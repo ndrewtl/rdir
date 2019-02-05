@@ -429,6 +429,7 @@ local function extract_task(cx, nid, prefix, force_read_write)
       replicable = false,
     },
     region_divergence = false,
+    metadata = false,
     prototype = task,
     annotations = ast.default_annotations(),
     span = label.span,

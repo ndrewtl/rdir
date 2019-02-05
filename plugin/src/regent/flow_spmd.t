@@ -2314,6 +2314,7 @@ do
         replicable = false,
       },
       region_divergence = false,
+      metadata = false,
       prototype = prototype,
       annotations = ast.default_annotations(),
       span = span,
