@@ -1390,11 +1390,11 @@ end
 function analyze_privileges.expr_raw_physical(cx, node, privilege_map)
   -- assert(false) -- This case needs special handling. -- Elliott: Why?
   return privilege_meet(
-    analyze_privileges.expr(cx, node.region, reads_writes))
+    analyze_privileges.expr_region_root(cx, node.region, reads_writes))
 end
 
 function analyze_privileges.expr_raw_fields(cx, node, privilege_map)
-  return analyze_privileges.expr(cx, node.region, none)
+  return analyze_privileges.expr_region_root(cx, node.region, none)
 end
 
 function analyze_privileges.expr_raw_value(cx, node, privilege_map)
