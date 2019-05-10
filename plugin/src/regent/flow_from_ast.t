@@ -1668,6 +1668,10 @@ function analyze_privileges.expr_deref(cx, node, privilege_map)
     usage)
 end
 
+function analyze_privileges.expr_address_of(cx, node, privilege_map)
+  return analyze_privileges.expr(cx, node.value, none)
+end
+
 function analyze_privileges.expr_import_ispace(cx, node, privilege_map)
   return analyze_privileges.expr(cx, node.value, reads)
 end
@@ -1846,6 +1850,9 @@ function analyze_privileges.expr(cx, node, privilege_map)
 
   elseif node:is(ast.typed.expr.Deref) then
     return analyze_privileges.expr_deref(cx, node, privilege_map)
+
+  elseif node:is(ast.typed.expr.AddressOf) then
+    return analyze_privileges.expr_address_of(cx, node, privilege_map)
 
   elseif node:is(ast.typed.expr.ImportIspace) then
     return analyze_privileges.expr_import_ispace(cx, node, privilege_map)
@@ -2950,6 +2957,15 @@ function flow_from_ast.expr_deref(cx, node, privilege_map, init_only)
     privilege_map)
 end
 
+function flow_from_ast.expr_address_of(cx, node, privilege_map, init_only)
+  local value = flow_from_ast.expr(cx, node.value, none)
+  return as_opaque_expr(
+    cx,
+    function(v1) return node { value = v1 } end,
+    terralib.newlist({value}),
+    privilege_map)
+end
+
 function flow_from_ast.expr_import_ispace(cx, node, privilege_map, init_only)
   local value = flow_from_ast.expr(cx, node.value, reads)
   return as_opaque_expr(
@@ -3104,6 +3120,9 @@ function flow_from_ast.expr(cx, node, privilege_map, init_only)
 
   elseif node:is(ast.typed.expr.Deref) then
     return flow_from_ast.expr_deref(cx, node, privilege_map, init_only)
+
+  elseif node:is(ast.typed.expr.AddressOf) then
+    return flow_from_ast.expr_address_of(cx, node, privilege_map, init_only)
 
   elseif node:is(ast.typed.expr.ImportIspace) then
     return flow_from_ast.expr_import_ispace(cx, node, privilege_map, init_only)
