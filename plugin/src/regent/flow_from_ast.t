@@ -2868,8 +2868,10 @@ function flow_from_ast.expr_attach_hdf5(cx, node, privilege_map, init_only)
   local region = flow_from_ast.expr_region_root(cx, node.region, reads_writes)
   local filename = flow_from_ast.expr(cx, node.filename, reads)
   local mode = flow_from_ast.expr(cx, node.mode, reads)
+  local fm = node.field_map and flow_from_ast.expr(cx, node.field_map, reads)
 
   local inputs = terralib.newlist({region, filename, mode})
+  if fm then inputs:insert(fm) end
   return as_attach_hdf5_expr(
     cx, inputs, node.region.fields,
     node.annotations, node.span, privilege_map)

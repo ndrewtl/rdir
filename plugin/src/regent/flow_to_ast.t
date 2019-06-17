@@ -891,14 +891,18 @@ function flow_to_ast.node_attach_hdf5(cx, nid)
   local label = cx.graph:node_label(nid)
   local inputs = cx.graph:incoming_edges_by_port(nid)
 
+  local maxport = get_maxport(inputs)
+
   local region = cx.ast[get_arg_node(inputs, 1, true)]
   local filename = cx.ast[get_arg_node(inputs, 2, false)]
   local mode = cx.ast[get_arg_node(inputs, 3, false)]
+  local field_map = maxport == 4 and cx.ast[get_arg_node(inputs, 4, false)]
 
   local action = ast.typed.expr.AttachHDF5 {
     region = as_expr_region_root(region, label.field_paths),
     filename = filename,
     mode = mode,
+    field_map = field_map,
     expr_type = terralib.types.unit,
     annotations = label.annotations,
     span = label.span,
