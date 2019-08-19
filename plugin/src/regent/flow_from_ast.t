@@ -1728,6 +1728,9 @@ function analyze_privileges.expr(cx, node, privilege_map)
   elseif node:is(ast.typed.expr.RawRuntime) then
     return new_field_map()
 
+  elseif node:is(ast.typed.expr.RawTask) then
+    return new_field_map()
+
   elseif node:is(ast.typed.expr.RawValue) then
     return analyze_privileges.expr_raw_value(cx, node, privilege_map)
 
@@ -2565,6 +2568,14 @@ function flow_from_ast.expr_raw_runtime(cx, node, privilege_map, init_only)
     privilege_map)
 end
 
+function flow_from_ast.expr_raw_task(cx, node, privilege_map, init_only)
+  return as_opaque_expr(
+    cx,
+    function() return node end,
+    terralib.newlist(),
+    privilege_map)
+end
+
 function flow_from_ast.expr_raw_value(cx, node, privilege_map, init_only)
   local value = flow_from_ast.expr(cx, node.value, name(node.value.expr_type))
   return as_opaque_expr(
@@ -3038,6 +3049,9 @@ function flow_from_ast.expr(cx, node, privilege_map, init_only)
 
   elseif node:is(ast.typed.expr.RawRuntime) then
     return flow_from_ast.expr_raw_runtime(cx, node, privilege_map, init_only)
+
+  elseif node:is(ast.typed.expr.RawTask) then
+    return flow_from_ast.expr_raw_task(cx, node, privilege_map, init_only)
 
   elseif node:is(ast.typed.expr.RawValue) then
     return flow_from_ast.expr_raw_value(cx, node, privilege_map, init_only)
