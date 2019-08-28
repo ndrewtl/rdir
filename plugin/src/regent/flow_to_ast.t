@@ -622,7 +622,7 @@ function flow_to_ast.node_task(cx, nid)
       --  3. Iterate subgraphs in topological order. For each subgraph,
       --     collapse the contained nodes into a single expression.
 
-      if cx.block_label and cx.block_label.annotations.parallel:is(ast.annotation.Demand) then
+      if cx.block_label and cx.block_label.annotations.index_launch:is(ast.annotation.Demand) then
         cx.ast[nid] = action
         return terralib.newlist()
       else
