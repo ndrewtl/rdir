@@ -1869,6 +1869,10 @@ function analyze_privileges.expr(cx, node, privilege_map)
   elseif node:is(ast.typed.expr.ImportPartition) then
     return analyze_privileges.expr_import_partition(cx, node, privilege_map)
 
+  elseif node:is(ast.typed.expr.Projection) then
+    assert(false,
+      "region projection is not supported by RDIR. please re-run your code with -fflow 0")
+
   else
     assert(false, "unexpected node type " .. tostring(node.node_type))
   end
