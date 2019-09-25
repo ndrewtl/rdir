@@ -1695,6 +1695,9 @@ function analyze_privileges.expr(cx, node, privilege_map)
   elseif node:is(ast.typed.expr.Constant) then
     return new_field_map()
 
+  elseif node:is(ast.typed.expr.Global) then
+    return new_field_map()
+
   elseif node:is(ast.typed.expr.Function) then
     return new_field_map()
 
@@ -2405,6 +2408,12 @@ function flow_from_ast.expr_constant(cx, node, privilege_map, init_only)
     cx.graph:add_node(flow.node.Constant { value = node }))
 end
 
+function flow_from_ast.expr_global(cx, node, privilege_map, init_only)
+  return attach_result(
+    privilege_map,
+    cx.graph:add_node(flow.node.Global { value = node }))
+end
+
 function flow_from_ast.expr_function(cx, node, privilege_map, init_only)
   return attach_result(
     privilege_map,
@@ -3016,6 +3025,9 @@ function flow_from_ast.expr(cx, node, privilege_map, init_only)
 
   elseif node:is(ast.typed.expr.Constant) then
     return flow_from_ast.expr_constant(cx, node, privilege_map, init_only)
+
+  elseif node:is(ast.typed.expr.Global) then
+    return flow_from_ast.expr_global(cx, node, privilege_map, init_only)
 
   elseif node:is(ast.typed.expr.Function) then
     return flow_from_ast.expr_function(cx, node, privilege_map, init_only)

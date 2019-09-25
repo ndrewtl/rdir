@@ -131,6 +131,7 @@ function graph:node_minimum_port(node)
     return 1
   elseif label:is(flow.node.data) or
     label:is(flow.node.Constant) or
+    label:is(flow.node.Global) or
     label:is(flow.node.Function)
   then
     return 1
@@ -958,7 +959,7 @@ function graph:printpretty(ids, types, metadata)
   self:traverse_nodes(function(i, node)
     local label = tostring(node:type()):gsub("[^.]+[.]", ""):lower()
     if node:is(flow.node.data) or
-      node:is(flow.node.Constant) or node:is(flow.node.Function)
+      node:is(flow.node.Constant) or node:is(flow.node.Global) or node:is(flow.node.Function)
     then
       local name = tostring(node.value.value):gsub("\n", "\\n")
       if terralib.isfunction(node.value.value) then
@@ -994,7 +995,7 @@ function graph:printpretty(ids, types, metadata)
     elseif node:is(flow.node.Close) then
       shape = "polygon, sides = 3, orientation = 270"
     elseif node:is(flow.node.data) or
-      node:is(flow.node.Constant) or node:is(flow.node.Function)
+      node:is(flow.node.Constant) or node:is(flow.node.Global) or node:is(flow.node.Function)
     then
       shape = "ellipse"
     else
@@ -1072,6 +1073,7 @@ flow.node.data:leaf("CrossProduct", {})
 flow.node.data:leaf("List", {})
 flow.node.data:leaf("Scalar", {"fresh"})
 flow.node:leaf("Constant", {"value"})
+flow.node:leaf("Global", {"value"})
 flow.node:leaf("Function", {"value"})
 
 -- Dataflow Graph: Edges

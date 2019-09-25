@@ -1127,6 +1127,11 @@ function flow_to_ast.node_constant(cx, nid)
   return terralib.newlist()
 end
 
+function flow_to_ast.node_global(cx, nid)
+  cx.ast[nid] = cx.graph:node_label(nid).value
+  return terralib.newlist()
+end
+
 function flow_to_ast.node_function(cx, nid)
   cx.ast[nid] = cx.graph:node_label(nid).value
   return terralib.newlist()
@@ -1208,6 +1213,9 @@ function flow_to_ast.node(cx, nid)
 
   elseif label:is(flow.node.Constant) then
     return flow_to_ast.node_constant(cx, nid)
+
+  elseif label:is(flow.node.Global) then
+    return flow_to_ast.node_global(cx, nid)
 
   elseif label:is(flow.node.Function) then
     return flow_to_ast.node_function(cx, nid)
