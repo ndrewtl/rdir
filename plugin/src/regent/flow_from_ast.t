@@ -1301,7 +1301,10 @@ function analyze_privileges.expr_field_access(cx, node, privilege_map)
   then
     return privilege_meet(analyze_privileges.expr(cx, node.value, none), usage)
   else
-    if value_type:isstruct() and not value_type.__no_field_slicing then
+    if std.is_ref(node.expr_type) and
+       std.extract_privileged_prefix(node.expr_type.refers_to_type,
+                                     node.expr_type.field_path):contains(node.field_name)
+    then
       privilege_map = privilege_map:prepend(node.field_name)
     end
     return privilege_meet(analyze_privileges.expr(cx, node.value, privilege_map), usage)
