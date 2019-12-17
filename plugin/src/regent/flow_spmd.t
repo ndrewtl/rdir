@@ -4841,32 +4841,9 @@ local function make_must_epoch(cx, block, annotations, span)
   flow_summarize_subgraph.entry(outer_cx.graph, inner_nid, {})
 
   local fence_label = flow.node.Opaque {
-    action = ast.typed.stat.Expr {
-      expr = ast.typed.expr.Call {
-        fn = ast.typed.expr.Function {
-          value = std.c.legion_runtime_issue_execution_fence,
-          expr_type = std.c.legion_runtime_issue_execution_fence:gettype(),
-          annotations = ast.default_annotations(),
-          span = span,
-        },
-        args = terralib.newlist({
-          ast.typed.expr.RawRuntime {
-            expr_type = std.c.legion_runtime_t,
-            annotations = ast.default_annotations(),
-            span = span,
-          },
-          ast.typed.expr.RawContext {
-            expr_type = std.c.legion_context_t,
-            annotations = ast.default_annotations(),
-            span = span,
-          },
-        }),
-        conditions = terralib.newlist({}),
-        replicable = true,
-        expr_type = terralib.types.unit,
-        annotations = ast.default_annotations(),
-        span = span,
-      },
+    action = ast.typed.stat.Fence {
+      kind = ast.fence_kind.Execution {},
+      blocking = false,
       annotations = ast.default_annotations(),
       span = span,
     }
