@@ -175,9 +175,32 @@ local function add_RedAW_edges(cx)
   end
 end
 
+local function traverse_transitive_readers(cx, from_node, reader, edges)
+  local outputs = cx.graph:outgoing_edges_by_port(reader)[cx.graph:node_result_port(reader)]
+  if outputs then
+    for _, edge in ipairs(outputs) do
+      local output = edge.to_node
+      local output_label = cx.graph:node_label(output)
+      if output_label:is(flow.node.data.Scalar) and output_label.fresh then
+        for _, transitive in ipairs(cx.graph:immediate_successors(output)) do
+          traverse_transitive_readers(cx, from_node, transitive, edges)
+        end
+      end
+    end
+  end
+
+  if reader ~= from_node and
+    not cx.graph:reachable(reader, from_node) and
+    not cx.graph:reachable(from_node, reader)
+  then
+    edges:insert({ from_node = reader, to_node = from_node })
+  end
+end
+
 local function get_WAR_edges(cx, edges)
   return function(from_node, from_port, from_label, to_node, to_port, to_label, label)
     if label:is(flow.edge.Write) then
+      -- Fresh scalars by definition have only one consumer.
       if to_label:is(flow.node.data.Scalar) and to_label.fresh then
         return
       end
@@ -197,12 +220,7 @@ local function get_WAR_edges(cx, edges)
             cx.tree:can_alias(other_region, region)
           then
             for _, reader in ipairs(cx.graph:immediate_successors(other)) do
-              if reader ~= from_node and
-                not cx.graph:reachable(reader, from_node) and
-                not cx.graph:reachable(from_node, reader)
-              then
-                edges:insert({ from_node = reader, to_node = from_node })
-              end
+              traverse_transitive_readers(cx, from_node, reader, edges)
             end
           end
         end
