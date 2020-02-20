@@ -3422,6 +3422,7 @@ local function rewrite_initial_copyin(cx, shard_loop, intersections, intersectio
                 span = span,
               },
               arg = ast.typed.expr.Call {
+                predicate = false,
                 fn = ast.typed.expr.Function {
                   value = std.c.legion_index_partition_is_complete,
                   expr_type = std.c.legion_index_partition_is_complete:gettype(),
@@ -3435,6 +3436,7 @@ local function rewrite_initial_copyin(cx, shard_loop, intersections, intersectio
                       span = span,
                     },
                     ast.typed.expr.Call {
+                      predicate = false,
                       fn = ast.typed.expr.Function {
                         value = std.c.legion_index_space_get_parent_index_partition,
                         expr_type = std.c.legion_index_space_get_parent_index_partition:gettype(),
@@ -5408,6 +5410,7 @@ local function issue_zipped_copy(cx, src_nids, dst_in_nids, dst_out_nids,
             span = span,
           },
           arg = ast.typed.expr.Call {
+            predicate = false,
             fn = ast.typed.expr.Function {
               value = std.c.legion_index_partition_is_complete,
               expr_type = std.c.legion_index_partition_is_complete:gettype(),
