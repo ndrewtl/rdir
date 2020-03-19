@@ -593,6 +593,7 @@ function flow_to_ast.node_task(cx, nid)
 
   local action = ast.typed.expr.Call {
     predicate = false,
+    predicate_else_value = false,
     fn = fn,
     args = args,
     conditions = conditions,
